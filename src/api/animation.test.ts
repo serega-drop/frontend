@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bonusSpinEnd,
   nextRotation,
   reelLandingPoint,
   reelStopOffset,
@@ -7,8 +8,27 @@ import {
   REEL_GAP,
   upgradeArc,
   upgradeLanding,
+  wheelMarkIndex,
 } from "./animation";
 describe("Геометрия анимаций", () => {
+  it("показывает исходы бонусной серии с той же шкалой и продолжает вращение", () => {
+    let rotation = 2023;
+    for (const [chance, won, sample] of [[75, true, 0.2], [50, false, 0.8], [100 / 3, true, 0.6], [100 / 6, false, 0.1]] as const) {
+      const end = bonusSpinEnd(rotation, chance, won, sample);
+      const angle = end % 360;
+      const { start: low, end: high } = upgradeArc(chance);
+      expect(end - rotation).toBeGreaterThanOrEqual(720);
+      expect(end - rotation).toBeLessThan(1080);
+      expect(angle >= low && angle <= high).toBe(won);
+      rotation = end;
+    }
+  });
+  it("отслеживает прохождение 15-градусных отметок и переход через ноль", () => {
+    const samples = [1800, 1814.9, 1815, 1830, 2159.9, 2160, 2175];
+    expect(samples.map(wheelMarkIndex)).toEqual([0, 0, 1, 2, 23, 0, 1]);
+    expect(wheelMarkIndex(-0.01)).toBe(23);
+    expect(wheelMarkIndex(-15)).toBe(23);
+  });
   it("центрирует золотой сектор в нижней точке полной окружности", () => {
     for (const chance of [0, 0.1, 35, 55, 75, 84, 89.99, 100]) {
       const arc = upgradeArc(chance);

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { LogIn } from "lucide-react";
 import { Modal } from "../../components/Modal";
-import { useDemo } from "../../app/context";
+import { useGame } from "../../app/context";
 export function Login({
   onClose,
   onSuccess,
@@ -9,20 +9,26 @@ export function Login({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const service = useDemo();
+  const service = useGame();
   const [error, setError] = useState("");
-  function submit(e: FormEvent<HTMLFormElement>) {
+  const [busy, setBusy] = useState(false);
+  async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy) return;
     const f = new FormData(e.currentTarget);
+    setBusy(true);
+    setError("");
     try {
-      service.login(String(f.get("username")), String(f.get("password")));
+      await service.login(String(f.get("username")), String(f.get("password")));
       onSuccess();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
   return (
-    <Modal title="Вход" onClose={onClose}>
+    <Modal title="Вход" onClose={onClose} busy={busy}>
       <p className="muted">Введи логин и пароль аккаунта.</p>
       <form onSubmit={submit} className="form-stack">
         <label>
@@ -48,15 +54,15 @@ export function Login({
         <p className="error" role="alert" id="login-error">
           {error}
         </p>
-        <button className="primary">
-          <LogIn size={18} /> Войти
+        <button className="primary" disabled={busy}>
+          <LogIn size={18} /> {busy ? "Входим…" : "Войти"}
         </button>
       </form>
-      <div className="demo-note">
+      {service.mode === "demo" && <div className="demo-note">
         Демо-аккаунт: <strong>player / player</strong>
         <br />
         Новые аккаунты создаёт администратор.
-      </div>
+      </div>}
     </Modal>
   );
 }

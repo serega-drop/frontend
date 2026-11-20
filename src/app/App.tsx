@@ -9,9 +9,11 @@ import {
   LogOut,
   Plus,
   ShieldCheck,
+  Volume2,
+  VolumeX,
   Wallet,
 } from "lucide-react";
-import { useDemo } from "./context";
+import { useGame } from "./context";
 import { Price } from "../components/Price";
 import { SkinImage } from "../components/SkinCard";
 import { Cases } from "../features/cases/Cases";
@@ -23,7 +25,9 @@ import { Payment } from "../features/payments/Payment";
 import { Admin } from "../features/admin/Admin";
 import { Modal } from "../components/Modal";
 import { DISCLAIMER } from "../api/economy";
-import { cases, getSkin, skins } from "../api/catalog";
+import type { TopUpRequest } from "../api/client";
+import type { InventoryItem } from "../api/types";
+import { gameSoundEnabled, preloadGameAudio, setGameSoundEnabled } from "../api/sounds";
 type Page = "cases" | "upgrade" | "inventory" | "history" | "admin";
 const paths: Record<Page, string> = {
   cases: "/cases",
@@ -43,12 +47,21 @@ const route = (): Page =>
         ? "cases"
         : "upgrade";
 export default function App() {
-  const service = useDemo(),
+  const service = useGame(),
     account = service.current();
+  const cases = service.cases();
+  const [collectionSnapshot, setCollectionSnapshot] = useState<InventoryItem[] | null>(null);
+  const collection = collectionSnapshot ?? account?.inventory ?? [];
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const [page, setPage] = useState<Page>(route);
   const [login, setLogin] = useState(false);
   const [payment, setPayment] = useState(false);
+  const [createdRequest, setCreatedRequest] = useState<TopUpRequest>();
   const [help, setHelp] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(gameSoundEnabled);
+  useEffect(preloadGameAudio, []);
   const [upgradeId, setUpgradeId] = useState<string>();
   const [caseSlug, setCaseSlug] = useState<string>();
   const pending = useRef<(() => void) | null>(null);
@@ -74,6 +87,7 @@ export default function App() {
   function pay() {
     requireLogin(() => setPayment(true));
   }
+  const recentRequest = createdRequest?.account_id === account?.id ? createdRequest : undefined;
   const nav = [
     { id: "upgrade" as const, label: "Апгрейд", icon: ArrowUpRight },
     { id: "cases" as const, label: "Кейсы", icon: Box },
@@ -121,6 +135,18 @@ export default function App() {
         <div className="header-actions">
           <span className="demo-indicator">DEMO</span>
           <button
+            className="icon-button"
+            aria-label="Звуки игры"
+            aria-pressed={soundEnabled}
+            title={soundEnabled ? "Выключить звуки" : "Включить звуки"}
+            onClick={() => {
+              setGameSoundEnabled(!soundEnabled);
+              setSoundEnabled(!soundEnabled);
+            }}
+          >
+            {soundEnabled ? <Volume2 size={17} aria-hidden="true" /> : <VolumeX size={17} aria-hidden="true" />}
+          </button>
+          <button
             className="icon-button help-button"
             aria-label="Как это работает"
             onClick={() => setHelp(true)}
@@ -129,16 +155,14 @@ export default function App() {
           </button>
           {account ? (
             <>
-              <div className="balance">
+              <button className="balance" aria-label="Запросить золото" onClick={pay}>
                 <Wallet size={15} />
                 <Price value={account.balance_minor} />
-                <button aria-label="Пополнить баланс" onClick={pay}>
-                  <Plus size={17} />
-                </button>
-              </div>
+                <Plus size={17} />
+              </button>
               <button
                 className="profile-button"
-                onClick={() => service.logout()}
+                onClick={() => { setLogoutError(""); setConfirmLogout(true); }}
                 aria-label={`Выйти из аккаунта ${account.name}`}
                 title={`Выйти · ${account.name}`}
               >
@@ -166,7 +190,7 @@ export default function App() {
             </div>
             <div className="sidebar-cases">
               {cases.map((c, i) => {
-                const prize = getSkin(c.entries[c.entries.length - 1].skin_id);
+                const prize = service.skin(c.entries[c.entries.length - 1].skin_id);
                 return (
                   <button
                     key={c.slug}
@@ -186,16 +210,16 @@ export default function App() {
             <button className="sidebar-pay" onClick={pay}>
               <Plus size={14} />
               <span>
-                Пополнить баланс<small>SEREGA PAY</small>
+                Запросить золото<small>SEREGA PAY</small>
               </span>
             </button>
             <div className="sidebar-label collection-label">
               <Backpack size={12} /> МОЯ КОЛЛЕКЦИЯ{" "}
-              <span>{account?.inventory.length ?? 0}</span>
+              <span>{collection.length}</span>
             </div>
-            {account?.inventory.length ? (
+            {collection.length ? (
               <div className="sidebar-owned">
-                {account.inventory.slice(0, 5).map((i) => (
+                {collection.slice(0, 5).map((i) => (
                   <button
                     key={i.id}
                     onClick={() => {
@@ -203,10 +227,10 @@ export default function App() {
                       navigate("upgrade");
                     }}
                   >
-                    <SkinImage skin={getSkin(i.skin_id)} />
+                    <SkinImage skin={service.skin(i.skin_id)} />
                     <span>
-                      {getSkin(i.skin_id).name}
-                      <small>{getSkin(i.skin_id).weapon}</small>
+                      {service.skin(i.skin_id).name}
+                      <small>{service.skin(i.skin_id).weapon}</small>
                     </span>
                   </button>
                 ))}
@@ -234,6 +258,7 @@ export default function App() {
                 initialSlug={caseSlug}
                 requireLogin={requireLogin}
                 goInventory={() => navigate("inventory")}
+                onCollectionChange={setCollectionSnapshot}
               />
             ) : page === "inventory" ? (
               account ? (
@@ -259,13 +284,17 @@ export default function App() {
               )
             ) : page === "history" ? (
               account ? (
-                <HistoryPage onDeposit={pay} />
+                <HistoryPage
+                  key={`${account.id}:${recentRequest?.id ?? ""}`}
+                  recentRequest={recentRequest}
+                  onDeposit={pay}
+                />
               ) : (
                 <section className="empty-state">
                   <History size={30} />
-                  <h1>История пополнений</h1>
+                  <h1>История заявок</h1>
                   <p className="muted">
-                    Войди, чтобы увидеть историю пополнений.
+                    Войди, чтобы увидеть историю заявок.
                   </p>
                   <button
                     className="primary"
@@ -284,6 +313,7 @@ export default function App() {
                   navigate("cases");
                 }}
                 onLogin={() => requireLogin(() => {})}
+                onCollectionChange={setCollectionSnapshot}
               />
             )}
           </main>
@@ -291,7 +321,7 @@ export default function App() {
             <p>{DISCLAIMER}</p>
             <div>
               <span>© 2026 SEREGA DROP</span>
-              <span>Предметов: {skins.length.toLocaleString("ru-RU")}</span>
+              <span>Предметов: {service.skins().length.toLocaleString("ru-RU")}</span>
               <a
                 href="/admin"
                 onClick={(e) => {
@@ -322,27 +352,50 @@ export default function App() {
       {payment && account && (
         <Payment
           onClose={() => setPayment(false)}
+          onSubmitted={setCreatedRequest}
           onViewHistory={() => {
             setPayment(false);
             navigate("history");
           }}
         />
       )}{" "}
+      {confirmLogout && account && (
+        <Modal title="Выйти из аккаунта?" onClose={() => setConfirmLogout(false)} busy={logoutBusy}>
+          <p>{account.name}</p>
+          {logoutError && <p className="error" role="alert">{logoutError}</p>}
+          <div className="result-actions">
+            <button type="button" className="secondary" autoFocus disabled={logoutBusy}
+              onClick={() => setConfirmLogout(false)}>Отмена</button>
+            <button type="button" className="primary" disabled={logoutBusy} onClick={async () => {
+              setLogoutBusy(true);
+              setLogoutError("");
+              try {
+                await service.logout();
+                setConfirmLogout(false);
+                setPayment(false);
+                setCreatedRequest(undefined);
+              } catch (reason) {
+                setLogoutError((reason as Error).message);
+              } finally {
+                setLogoutBusy(false);
+              }
+            }}>{logoutBusy ? "Выходим…" : "Выйти"}</button>
+          </div>
+        </Modal>
+      )}
       {help && (
         <Modal title="Как это работает" onClose={() => setHelp(false)}>
           <ol className="help-steps">
             <li>
               <strong>Вход</strong>
               <p>
-                Демо-аккаунт: player / player. Новых игроков создаёт
-                администратор.
+                Новых игроков создаёт администратор.
               </p>
             </li>
             <li>
               <strong>Баланс</strong>
               <p>
-                1 ₽ = 1,5 G. Промокод SEREGA добавляет 20%. Суточный лимит — 10
-                000 G по Минску.
+                1 ₽ = 1,5 G. Золото зачисляется после одобрения заявки администратором.
               </p>
             </li>
             <li>
@@ -355,9 +408,7 @@ export default function App() {
             <li>
               <strong>Апгрейд</strong>
               <p>
-                Выбери свой предмет и более дорогую цель. Шанс = 90 × цена
-                своего / цена цели. Исходный предмет используется в обоих
-                исходах.
+                Выбери до шести своих предметов и более дорогую цель. Сервис рассчитает шанс и зафиксирует исход.
               </p>
             </li>
           </ol>

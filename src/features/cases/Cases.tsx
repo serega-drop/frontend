@@ -1,18 +1,17 @@
-import { useCallback, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, ArrowRight, ChevronRight } from "lucide-react";
-import {
-  CASE_GOOD_DROP_BASE_CHANCE,
-  cases,
-  getSkin,
-} from "../../api/catalog";
-import type { GameCase, Skin } from "../../api/types";
-import { useDemo } from "../../app/context";
+import type { GameCase, InventoryItem, Skin } from "../../api/types";
+import { useGame } from "../../app/context";
 import { SkinCard, SkinImage } from "../../components/SkinCard";
+import { LoadingStatus } from "../../components/LoadingStatus";
 import { Price } from "../../components/Price";
 import { DropResult } from "../../components/DropResult";
 import { useAnimationCompletion } from "../../components/useAnimationCompletion";
+import { gameSoundEnabled, playGameSound, unlockGameAudio } from "../../api/sounds";
 import {
   CASE_DURATION,
+  REEL_CARD_WIDTH,
+  REEL_GAP,
   randomUnit,
   reelLandingPoint,
   reelStopOffset,
@@ -21,19 +20,23 @@ export function Cases({
   requireLogin,
   goInventory,
   initialSlug,
+  onCollectionChange,
 }: {
   requireLogin: (action: () => void) => void;
   goInventory: () => void;
   initialSlug?: string;
+  onCollectionChange: (items: InventoryItem[] | null) => void;
 }) {
-  const [selected, setSelected] = useState<GameCase | null>(
-    () => cases.find((c) => c.slug === initialSlug) ?? null,
-  );
+  const service = useGame();
+  const cases = service.cases();
+  const [selectedSlug, setSelectedSlug] = useState(initialSlug);
+  const selected = cases.find((c) => c.slug === selectedSlug);
   return selected ? (
     <CaseDetail
       key={selected.slug}
       gameCase={selected}
-      back={() => setSelected(null)}
+      back={() => setSelectedSlug(undefined)}
+      onCollectionChange={onCollectionChange}
       requireLogin={requireLogin}
       goInventory={goInventory}
     />
@@ -48,14 +51,14 @@ export function Cases({
       <div className="case-grid">
         {cases.map((c, i) => {
           const prizes = c.entries
-            .map((e) => getSkin(e.skin_id))
+            .map((e) => service.skin(e.skin_id))
             .sort((a, b) => b.price_minor - a.price_minor)
             .slice(0, 3);
           return (
             <button
               className={`case-card case-card-${i % 3}`}
               key={c.slug}
-              onClick={() => setSelected(c)}
+              onClick={() => setSelectedSlug(c.slug)}
             >
               <div className="case-showcase">
                 {prizes.map((skin, j) => (
@@ -68,7 +71,7 @@ export function Cases({
                 <h2>{c.name}</h2>
                 <div className="case-rarities">
                   {[
-                    ...new Set(c.entries.map((e) => getSkin(e.skin_id).rarity)),
+                    ...new Set(c.entries.map((e) => service.skin(e.skin_id).rarity)),
                   ].map((r) => (
                     <span key={r} className={`rarity-${r}`}>
                       {r}
@@ -77,7 +80,7 @@ export function Cases({
                 </div>
                 <span className="case-chance">
                   Базовый шанс хорошего дропа
-                  <strong>{CASE_GOOD_DROP_BASE_CHANCE}%</strong>
+                  <strong>{c.entries.filter((entry) => service.skin(entry.skin_id).price_minor >= c.price_minor).reduce((sum, entry) => sum + entry.probability, 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })}%</strong>
                 </span>
                 <span className="case-cta">
                   <Price value={c.price_minor} />
@@ -98,15 +101,17 @@ function CaseDetail({
   back,
   requireLogin,
   goInventory,
+  onCollectionChange,
 }: {
   gameCase: GameCase;
   back: () => void;
   requireLogin: (action: () => void) => void;
   goInventory: () => void;
+  onCollectionChange: (items: InventoryItem[] | null) => void;
 }) {
-  const service = useDemo();
+  const service = useGame();
   const [phase, setPhase] = useState<
-    "idle" | "spinning" | "result" | "settled"
+    "idle" | "requesting" | "spinning" | "result" | "settled"
   >("idle");
   const [result, setResult] = useState<Skin | null>(null);
   const [error, setError] = useState("");
@@ -115,31 +120,75 @@ function CaseDetail({
     reel: Skin[];
     stop: number;
     winner: number;
+    stride: number;
   } | null>(null);
   const lock = useRef(false);
-  const busy = phase === "spinning";
+  const spinning = phase === "spinning";
+  const busy = spinning || phase === "requesting";
+  const alive = useRef(true);
+  const reelElement = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; onCollectionChange(null); };
+  }, [onCollectionChange]);
   const complete = useCallback(
-    () => setPhase((current) => (current === "spinning" ? "result" : current)),
-    [],
+    () => { setPhase("result"); onCollectionChange(null); },
+    [onCollectionChange],
   );
   const finishAnimation = useAnimationCompletion(
-    busy,
+    spinning,
     CASE_DURATION,
     complete,
   );
-  const idleReel = c.entries.slice(0, 9).map((e) => getSkin(e.skin_id));
-  function open() {
+  useEffect(() => {
+    const reel = reelElement.current;
+    if (!spinning || !roll || !reel) return;
+
+    const { stride } = roll;
+    let card = 0;
+    let frame: number;
+    const playCrossings = () => {
+      if (gameSoundEnabled()) {
+        const transform = getComputedStyle(reel).transform;
+        if (transform !== "none") {
+          const offset = -new DOMMatrixReadOnly(transform).m41;
+          const next = Math.floor(offset / stride);
+          if (next > card) {
+            card = next;
+            playGameSound("case-tick");
+          }
+        }
+      }
+      frame = requestAnimationFrame(playCrossings);
+    };
+    frame = requestAnimationFrame(playCrossings);
+    return () => cancelAnimationFrame(frame);
+  }, [spinning, roll]);
+  useEffect(() => {
+    if (phase === "result") return playGameSound("case-drop");
+  }, [phase]);
+  const idleReel = c.entries.slice(0, 9).map((e) => service.skin(e.skin_id));
+  async function open() {
     if (lock.current) return;
     setError("");
     lock.current = true;
+    onCollectionChange(service.current()?.inventory ?? []);
+    setPhase("requesting");
+    setResult(null);
+    setRoll(null);
     try {
-      const prize = service.openCase(c),
-        skin = getSkin(prize.skin_id);
+      const element = reelElement.current;
+      const width = element?.firstElementChild?.getBoundingClientRect().width || REEL_CARD_WIDTH;
+      const measuredGap = element ? parseFloat(getComputedStyle(element).columnGap) : NaN;
+      const gap = Number.isFinite(measuredGap) ? measuredGap : REEL_GAP;
+      const prize = await service.openCase(c);
+      if (!alive.current) return;
+      const skin = service.skin(prize.skin_id);
       const winner = 32 + Math.floor(randomUnit() * 7);
       const reel = Array.from({ length: winner + 7 }, (_, i) =>
         i === winner
           ? skin
-          : getSkin(
+          : service.skin(
               c.entries[Math.floor(randomUnit() * c.entries.length)].skin_id,
             ),
       );
@@ -148,15 +197,16 @@ function CaseDetail({
         id: crypto.randomUUID(),
         reel,
         winner,
-        stop: reelStopOffset(winner, reelLandingPoint(randomUnit())),
+        stride: width + gap,
+        stop: reelStopOffset(winner, reelLandingPoint(randomUnit(), width), width, gap),
       });
-      setPhase(
-        matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "result"
-          : "spinning",
-      );
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) complete();
+      else setPhase("spinning");
     } catch (e) {
+      if (!alive.current) return;
       lock.current = false;
+      setPhase("idle");
+      onCollectionChange(null);
       setError((e as Error).message);
     }
   }
@@ -175,13 +225,14 @@ function CaseDetail({
       <div className="reel-window" aria-hidden="true">
         <div className="reel-pointer" />
         <div
+          ref={reelElement}
           key={roll?.id ?? "idle"}
-          className={`reel ${busy ? "reel-spinning" : ""}`}
+          className={`reel ${spinning ? "reel-spinning" : ""}`}
           style={
             roll
               ? ({
                   transform: `translate3d(${-roll.stop}px,0,0)`,
-                  "--reel-start": "-84px",
+                  "--reel-start": "calc(-0.5 * var(--reel-card-width))",
                   "--reel-stop": `${-roll.stop}px`,
                   "--roll-duration": `${CASE_DURATION}ms`,
                 } as CSSProperties)
@@ -196,7 +247,7 @@ function CaseDetail({
               className={`reel-item rarity-${s.rarity} ${!busy && roll?.winner === i ? "reel-winner" : ""}`}
               key={i}
             >
-              <SkinImage skin={s} />
+              <SkinImage skin={s} eager />
               <strong>{s.weapon}</strong>
               <span>{s.name}</span>
             </div>
@@ -207,7 +258,7 @@ function CaseDetail({
         <button
           className="primary"
           disabled={busy}
-          onClick={() => requireLogin(open)}
+          onClick={() => { unlockGameAudio(); requireLogin(open); }}
         >
           {busy ? (
             "Открываем…"
@@ -218,6 +269,7 @@ function CaseDetail({
             </>
           )}
         </button>
+        {phase === "requesting" && <LoadingStatus>Получаем результат открытия…</LoadingStatus>}
         {result && !busy && (
           <button className="secondary" onClick={goInventory}>
             В инвентарь <ArrowRight size={17} />
@@ -246,7 +298,7 @@ function CaseDetail({
         {c.entries.map((e) => (
           <SkinCard
             key={e.skin_id}
-            skin={getSkin(e.skin_id)}
+            skin={service.skin(e.skin_id)}
             eyebrow={`${e.probability.toLocaleString("ru-RU", { maximumFractionDigits: 4 })}%`}
           />
         ))}

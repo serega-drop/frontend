@@ -10,9 +10,9 @@ export const rarityColors = {
   Arcane: "var(--rarity-arcane)",
   Nameless: "var(--rarity-nameless)",
 };
-export function SkinImage({ skin }: { skin: Skin }) {
-  const [failed, setFailed] = useState(false);
-  return failed ? (
+export function SkinImage({ skin, eager = false }: { skin: Skin; eager?: boolean }) {
+  const [failedImage, setFailedImage] = useState("");
+  return !skin.image || failedImage === skin.image ? (
     <div className="image-fallback">
       {skin.weapon}
       <span>Изображение недоступно</span>
@@ -21,8 +21,9 @@ export function SkinImage({ skin }: { skin: Skin }) {
     <img
       src={skin.image}
       alt={`${skin.weapon} ${skin.name}`}
-      loading="lazy"
-      onError={() => setFailed(true)}
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
+      onError={() => setFailedImage(skin.image)}
     />
   );
 }

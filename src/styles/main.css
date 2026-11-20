@@ -728,7 +728,7 @@ main {
   background: repeating-conic-gradient(
     from 0deg,
     #7163424d 0deg 1deg,
-    transparent 1deg 15deg
+    transparent 1deg var(--wheel-mark-step, 15deg)
   );
   mask-image: radial-gradient(circle, transparent 67%, black 68%);
   opacity: 0.6;
@@ -3732,7 +3732,7 @@ input::placeholder {
   background: repeating-conic-gradient(
     from 0deg,
     #8bd7ff3b 0deg 1deg,
-    transparent 1deg 15deg
+    transparent 1deg var(--wheel-mark-step, 15deg)
   );
 }
 .chance-core {
@@ -4434,4 +4434,175 @@ th {
     width: 30px;
     height: 30px;
   }
+}
+
+:root {
+  font-size: 17.5px;
+}
+.game-header nav a,
+.primary,
+.secondary,
+input,
+select {
+  min-height: 2.25rem;
+}
+.balance {
+  cursor: pointer;
+  min-height: 2.5rem;
+}
+.reel-window {
+  --reel-card-width: 12rem;
+  height: 13.5rem;
+}
+.reel {
+  transform: translateX(calc(-0.5 * var(--reel-card-width)));
+  gap: 0.55rem;
+}
+.reel-item {
+  width: var(--reel-card-width);
+  height: 11.9rem;
+}
+.reel-item img {
+  width: 80%;
+  height: 60%;
+}
+.gold-sector {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: conic-gradient(from var(--gold-start), #ffce62 0 var(--gold-width), transparent var(--gold-width));
+  mask-image: radial-gradient(circle, transparent 65%, #000 66%);
+  pointer-events: none;
+}
+.inventory-actions,
+.admin-nav {
+  margin-bottom: 1rem;
+}
+.inventory-page .skin-actions {
+  flex-wrap: wrap;
+}
+.inventory-page .skin-actions > .checkbox-label {
+  display: flex;
+  flex-basis: 100%;
+  gap: 0.4rem;
+  min-height: 1.5rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.inventory-page .skin-actions .checkbox-label input[type="checkbox"] {
+  flex: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--neon-primary-bright);
+  cursor: inherit;
+}
+.inventory-actions output {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.request-fields input[type="checkbox"],
+.admin-workspace input[type="checkbox"] {
+  min-height: auto;
+  min-width: 1rem;
+  min-block-size: 1rem;
+}
+.request-fields,
+.settings-grid {
+  min-width: 0;
+}
+.request-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.desired-chance {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0.25rem 0;
+}
+.desired-chance input {
+  width: 4.3rem;
+}
+.bonus-slot-value {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: 4rem;
+  font-size: 1.3rem;
+}
+.bonus-steps {
+  list-style: decimal inside;
+  display: grid;
+  gap: 0.4rem;
+}
+.admin-stat-grid,
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 0.8rem;
+}
+.admin-stat-grid div {
+  padding: 0.65rem;
+  border: 1px solid var(--neon-line);
+  border-radius: 6px;
+}
+.admin-stat-grid dd {
+  margin: 0.25rem 0 0;
+  font-weight: 700;
+}
+.settings-grid label,
+.admin-nav + .panel label {
+  display: grid;
+  gap: 0.3rem;
+}
+.settings-grid label input {
+  width: 100%;
+}
+.settings-grid small {
+  color: var(--muted);
+}
+.danger-zone {
+  border-color: #e46e6370;
+}
+@media (max-width: 650px) {
+  :root {
+    font-size: 16px;
+  }
+  .reel-window {
+    --reel-card-width: 10rem;
+  }
+  .deposit-row > .result-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+.game-startup {
+  min-height: 65vh;
+}
+
+.loading-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.loading-status svg {
+  flex: none;
+  color: var(--neon-primary-bright);
+  animation: loading-spin 1s linear infinite;
+}
+
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-status svg { animation: none; }
 }

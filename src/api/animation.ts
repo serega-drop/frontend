@@ -1,5 +1,7 @@
 // CSS angles are clockwise from 12 o'clock; 180° is the bottom of the wheel.
 export const UPGRADE_DURATION = 5200;
+export const BONUS_SPIN_DURATION = 2100;
+export const WHEEL_MARK_STEP = 15;
 export const CASE_DURATION = 6000;
 export const REEL_CARD_WIDTH = 168;
 export const REEL_GAP = 8;
@@ -18,14 +20,21 @@ export function upgradeLanding(chance: number, won: boolean, sample: number) {
     ? start + sweep * fraction
     : (end + (360 - sweep) * fraction) % 360;
 }
+export function wheelMarkIndex(angle: number) {
+  const normalized = ((angle % 360) + 360) % 360;
+  return Math.floor(normalized / WHEEL_MARK_STEP);
+}
 export function nextRotation(current: number, landing: number, turns = 5) {
   const normalized = ((current % 360) + 360) % 360;
   return current + turns * 360 + ((landing - normalized + 360) % 360);
 }
-export function reelStopOffset(index: number, point: number) {
-  return index * (REEL_CARD_WIDTH + REEL_GAP) + point;
+export function bonusSpinEnd(current: number, chance: number, won: boolean, sample: number) {
+  return nextRotation(current, upgradeLanding(chance, won, sample), 2);
 }
-export function reelLandingPoint(sample: number) {
+export function reelStopOffset(index: number, point: number, width = REEL_CARD_WIDTH, gap = REEL_GAP) {
+  return index * (width + gap) + point;
+}
+export function reelLandingPoint(sample: number, width = REEL_CARD_WIDTH) {
   // Never land in a gap or on a card boundary; vary across most of the winner.
-  return REEL_CARD_WIDTH * (0.16 + Math.max(0, Math.min(1, sample)) * 0.68);
+  return width * (0.16 + Math.max(0, Math.min(1, sample)) * 0.68);
 }

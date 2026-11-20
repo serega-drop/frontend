@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  depositQuote,
-  DAILY_LIMIT,
-  minskDay,
-  nearestTarget,
-  remainingLimit,
-  upgradeChance,
-} from "./economy";
 import { createDemoService, freshDatabase } from "./demo";
+import { upgradeLanding } from "./animation";
 import {
   CASE_GOOD_DROP_BASE_CHANCE,
   CASE_GOOD_DROP_CAP,
@@ -21,14 +14,26 @@ import {
   getSkin,
   skins,
 } from "./catalog";
-function setup(random = () => 0) {
-  let value: string | null = null;
-  const storage = {
-    getItem: () => value,
-    setItem: (_key: string, v: string) => {
-      value = v;
-    },
+function memoryStorage() {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
   };
+}
+type Demo = ReturnType<typeof createDemoService>;
+function approve(service: Demo, rubles: number) {
+  const request = service.createTopUp({ rubles, method: "СБП", promo: "" });
+  service.adminLogin("admin");
+  service.decideRequest(request.id, "approve");
+  service.adminLogout();
+}
+function attempt(service: Demo, inventory_item_ids: string[], target_skin_id: string) {
+  const input = { inventory_item_ids, target_skin_id };
+  return service.upgrade(input, service.quoteUpgrade(input));
+}
+function setup(random = () => 0) {
+  const storage = memoryStorage();
   const service = createDemoService(storage, random);
   service.login("player", "player");
   return { service, storage };
@@ -37,58 +42,36 @@ function sequence(...values: number[]) {
   let index = 0;
   return () => values[Math.min(index++, values.length - 1)];
 }
-describe("Касса и календарь", () => {
-  it("начисляет 750 + 150 = 900 G за 500 ₽", () =>
-    expect(depositQuote(500, "serega")).toMatchObject({
-      base_minor: 75000,
-      bonus_minor: 15000,
-      credited_minor: 90000,
-    }));
-  it("отклоняет неизвестный код и дробные рубли", () => {
-    expect(() => depositQuote(500, "wrong")).toThrow("Промокод");
-    expect(() => depositQuote(1.5, "")).toThrow("целую");
-  });
-  it("использует полночь по Минску", () => {
-    expect(minskDay(new Date("2026-11-15T20:59:59Z"))).toBe("2026-11-15");
-    expect(minskDay(new Date("2026-11-15T21:00:00Z"))).toBe("2026-11-16");
-  });
-  it("отклоняет превышение без изменения баланса и истории", () => {
+describe("Заявки на золото", () => {
+  it("отправляет заявку без зачисления и применяет бонус при одобрении", () => {
     const { service } = setup();
-    service.deposit(5000, "СБП", "SEREGA");
-    expect(service.current()!.balance_minor).toBe(900000);
-    expect(() => service.deposit(1000, "Карта", "")).toThrow("дневной лимит");
-    expect(service.current()!.deposits).toHaveLength(1);
-    expect(remainingLimit(service.current()!)).toBe(100000);
+    const request = service.createTopUp({ rubles: 500, method: "СБП", promo: "serega" });
+    expect(request).toMatchObject({ status: "pending", base_minor: 75000, bonus_minor: 15000 });
+    expect(service.current()!.balance_minor).toBe(0);
+    service.adminLogin("admin");
+    service.decideRequest(request.id, "approve");
+    expect(service.current()!.balance_minor).toBe(90000);
+    expect(service.requests()[0].status).toBe("approved");
+    expect(() => service.decideRequest(request.id, "approve")).toThrow();
+    expect(service.current()!.balance_minor).toBe(90000);
   });
-  it("допускает ровный лимит и обновляет его в новый день", () => {
-    const db = freshDatabase();
-    db.accounts[0].balance_minor = 999850;
-    db.accounts[0].deposits = [
-      {
-        id: "boundary",
-        created_at: new Date().toISOString(),
-        rubles: 1,
-        method: "СБП",
-        promo: "",
-        base_minor: 999850,
-        bonus_minor: 0,
-        credited_minor: 999850,
-      },
-    ];
-    let raw = JSON.stringify(db);
-    const service = createDemoService({
-      getItem: () => raw,
-      setItem: (_, value) => {
-        raw = value;
-      },
-    });
-    service.login("player", "player");
-    service.deposit(1, "СБП", "");
-    const a = service.current()!;
-    expect(a.balance_minor).toBe(DAILY_LIMIT);
-    expect(remainingLimit(a)).toBe(0);
-    const next = new Date(Date.now() + 86400000);
-    expect(remainingLimit(a, next)).toBe(DAILY_LIMIT);
+  it("одобряет базу явно после исчерпания последней активации", () => {
+    const { service } = setup();
+    service.adminLogin("admin");
+    service.createPromo({ code: "ONCE", percent: 20, activation_limit: 1 });
+    const payload = { rubles: 5000, method: "Карта", promo: "ONCE" };
+    const first = service.createTopUp(payload);
+    const second = service.createTopUp(payload);
+    service.decideRequest(first.id, "approve");
+    expect(() => service.decideRequest(second.id, "approve")).toThrow("Промокод недоступен");
+    expect(service.requests().find((r) => r.id === second.id)?.status).toBe("pending");
+    service.decideRequest(second.id, "approve_base");
+    expect(service.current()!.balance_minor).toBe(1650000);
+    expect(service.promoCodes().find((p) => p.code === "ONCE")?.activations).toBe(1);
+  });
+  it("отклоняет неизвестный код и дробные рубли", () => {
+    expect(() => setup().service.quoteTopUp({ rubles: 500, method: "СБП", promo: "wrong" })).toThrow("Промокод");
+    expect(() => setup().service.quoteTopUp({ rubles: 1.5, method: "СБП", promo: "" })).toThrow("целую");
   });
 });
 describe("Каталог и экземпляры", () => {
@@ -183,19 +166,19 @@ describe("Каталог и экземпляры", () => {
     ]);
   });
   it("хранит pity отдельно по кейсам и сбрасывает его после хорошего дропа", () => {
-    const { service } = setup(sequence(0, 0, 0, 0.999999));
-    service.deposit(200, "СБП", "");
+    const { service, storage } = setup(sequence(0, 0, 0, 0.999999));
+    const progress = () => JSON.parse(storage.getItem("serega-drop:demo:v1")!).accounts[0].case_miss_streaks;
+    approve(service, 200);
     const first = cases[0],
       second = cases[1];
     for (let attempt = 0; attempt < 3; attempt++)
       service.openCase(first);
-    expect(service.current()!.case_miss_streaks[first.slug]).toBe(3);
+    expect(progress()[first.slug]).toBe(3);
     service.openCase(second);
-    const progress = service.current()!.case_miss_streaks;
-    expect(progress[first.slug]).toBe(3);
-    expect(progress[second.slug]).toBe(0);
+    expect(progress()[first.slug]).toBe(3);
+    expect(progress()[second.slug]).toBe(0);
     service.openCase(first);
-    expect(service.current()!.case_miss_streaks[first.slug]).toBe(0);
+    expect(progress()[first.slug]).toBe(0);
   });
   it("восстанавливает старый прогресс без счётчиков pity", () => {
     const legacy = JSON.parse(
@@ -211,7 +194,8 @@ describe("Каталог и экземпляры", () => {
       },
     });
     service.login("player", "player");
-    expect(service.current()!.case_miss_streaks).toEqual({});
+    expect(service.current()!.balance_minor).toBe(0);
+    expect(service.current()).not.toHaveProperty("case_miss_streaks");
   });
   it("не меняет pity при отказе открытия из-за баланса", () => {
     const { service } = setup();
@@ -219,20 +203,33 @@ describe("Каталог и экземпляры", () => {
     expect(() => service.openCase(cases[0])).toThrow("Пополните");
     expect(service.current()).toEqual(before);
   });
+  it("требует новое подтверждение, если после расчёта продажи добавился предмет", () => {
+    const { service } = setup();
+    service.adminLogin("admin");
+    service.grant("demo-player", skins[0].id);
+    const all = { mode: "all" as const, inventory_item_ids: [] };
+    const stale = service.quoteSale(all);
+    service.grant("demo-player", skins[0].id);
+    expect(() => service.sell(stale)).toThrow("Инвентарь изменился");
+    expect(service.current()?.inventory).toHaveLength(2);
+    service.sell(service.quoteSale(all));
+    expect(service.current()?.inventory).toHaveLength(0);
+    expect(service.statistics("demo-player").items_sold).toBe(2);
+  });
   it("отдельно продаёт две одинаковые копии", () => {
     const { service } = setup();
-    service.deposit(100, "СБП", "");
+    approve(service, 100);
     const a = service.openCase(cases[0]),
       b = service.openCase(cases[0]);
     expect(a.skin_id).toBe(b.skin_id);
     expect(a.id).not.toBe(b.id);
-    service.sell(a.id);
+    service.sell(service.quoteSale({ mode: "selected", inventory_item_ids: [a.id] }));
     expect(service.current()!.inventory.map((i) => i.id)).toEqual([b.id]);
-    expect(() => service.sell(a.id)).toThrow();
+    expect(() => service.quoteSale({ mode: "selected", inventory_item_ids: [a.id] })).toThrow();
   });
   it("сохраняет прогресс, но не сессию", () => {
     const { service, storage } = setup();
-    service.deposit(100, "СБП", "");
+    approve(service, 100);
     const fresh = createDemoService(storage);
     expect(fresh.current()).toBeNull();
     fresh.login("player", "player");
@@ -243,11 +240,14 @@ describe("Каталог и экземпляры", () => {
 });
 describe("Апгрейды и администрирование", () => {
   it("подбирает ближайшую цену и вычисляет точный шанс", () => {
-    const source = { ...skins[0], price_minor: 10000 },
-      target = { ...skins[1], price_minor: 25000 };
-    expect(upgradeChance(source, target)).toBe(36);
-    expect(nearestTarget(source, [source, target], 35)).toEqual(target);
-    expect(() => upgradeChance(target, source)).toThrow();
+    const { service } = setup();
+    service.adminLogin("admin");
+    service.grant("demo-player", skins[0].id);
+    const inventory_item_ids = [service.current()!.inventory[0].id];
+    const result = service.quoteUpgrade({ inventory_item_ids, desired_chance: 35 });
+    const differences = skins.filter((skin) => skin.price_minor > skins[0].price_minor)
+      .map((skin) => Math.abs(90 * skins[0].price_minor / skin.price_minor - 35));
+    expect(Math.abs(result.chance - 35)).toBeCloseTo(Math.min(...differences));
   });
   for (const won of [true, false])
     it(`забирает исходный экземпляр при ${won ? "успехе" : "проигрыше"}`, () => {
@@ -257,7 +257,7 @@ describe("Апгрейды и администрирование", () => {
       const target = skins.find((s) => s.price_minor >= 10000)!;
       service.grant("demo-player", source.id);
       const id = service.current()!.inventory[0].id;
-      expect(service.upgrade([id], target.id)).toBe(won);
+      expect(attempt(service, [id], target.id).won).toBe(won);
       expect(service.current()!.inventory.some((i) => i.id === id)).toBe(false);
       expect(
         service.current()!.inventory.some((i) => i.skin_id === target.id),
@@ -299,22 +299,22 @@ describe("Несколько экземпляров в апгрейде", () => 
     };
   }
   it("рассчитывает шанс по сумме цен", () => {
-    const target = { ...skins[0], price_minor: 50000 };
-    expect(upgradeChance({ price_minor: 10000 + 15000 }, target)).toBe(45);
-    expect(nearestTarget({ price_minor: 25000 }, [target], 45)).toEqual(target);
+    const { service, ids, source, target } = granted(2);
+    expect(service.quoteUpgrade({ inventory_item_ids: ids, target_skin_id: target.id }).chance)
+      .toBeCloseTo(90 * 2 * source.price_minor / target.price_minor);
   });
   for (const won of [true, false])
     it(`расходует все 6 экземпляров при ${won ? "успехе" : "неудаче"}, сохраняя седьмой`, () => {
       const { service, ids, target, storage } = granted(7, won),
         selected = ids.slice(0, 6);
-      expect(service.upgrade(selected, target.id)).toBe(won);
+      expect(attempt(service, selected, target.id).won).toBe(won);
       const inventory = service.current()!.inventory;
       expect(inventory.some((i) => selected.includes(i.id))).toBe(false);
       expect(inventory.some((i) => i.id === ids[6])).toBe(true);
       expect(inventory.filter((i) => i.skin_id === target.id)).toHaveLength(
         won ? 1 : 0,
       );
-      expect(() => service.upgrade(selected, target.id)).toThrow();
+      expect(() => attempt(service, selected, target.id).won).toThrow();
       const restored = createDemoService(storage);
       restored.login("player", "player");
       expect(restored.current()!.inventory).toEqual(inventory);
@@ -323,24 +323,52 @@ describe("Несколько экземпляров в апгрейде", () => 
     const { service, ids, target } = granted(7),
       before = service.current();
     for (const invalid of [[], ids, [ids[0], ids[0]]]) {
-      expect(() => service.upgrade(invalid, target.id)).toThrow();
+      expect(() => attempt(service, invalid, target.id)).toThrow();
       expect(service.current()).toEqual(before);
     }
   });
   it("не списывает доступные экземпляры, если один отсутствует или цель не дороже суммы", () => {
     const { service, ids, source } = granted(2),
       before = service.current();
-    expect(() => service.upgrade([ids[0], "missing"], source.id)).toThrow(
+    expect(() => attempt(service, [ids[0], "missing"], source.id)).toThrow(
       "недоступен",
     );
     expect(service.current()).toEqual(before);
     const tooCheap = skins.find((s) => s.price_minor === 1000)!;
-    expect(() => service.upgrade(ids, tooCheap.id)).toThrow("дороже суммы");
+    expect(() => attempt(service, ids, tooCheap.id)).toThrow("дороже суммы");
     expect(service.current()).toEqual(before);
+  });
+  it("использует всю ставку в золотом проигрыше и не выдаёт утешение", () => {
+    const source = skins.find((skin) => skin.price_minor > 150000 && skin.price_minor < 250000)!;
+    const target = skins.find((skin) => skin.price_minor > 2 * source.price_minor)!;
+    const angle = upgradeLanding(90 * 2 * source.price_minor / target.price_minor, false, 0.2);
+    const { service } = setup(sequence(0.99, 0.2, 0, ((angle - 1 + 360) % 360) / 360, 0.99));
+    service.adminLogin("admin");
+    service.grant("demo-player", source.id);
+    service.grant("demo-player", source.id);
+    const result = attempt(service, service.current()!.inventory.map((item) => item.id), target.id);
+    expect(result.won).toBe(false);
+    expect(result.consolation).toBeUndefined();
+    expect(result.bonus).toMatchObject({ initial_minor: 2 * source.price_minor, final_minor: 2 * source.price_minor });
+    expect(result.bonus?.steps.every((step) => !step.won)).toBe(true);
+    expect(result.bonus?.rewards.length).toBeLessThanOrEqual(6);
+  });
+  it("сбрасывает активные настройки к defaults и отклоняет устаревшую версию", () => {
+    const { service } = setup();
+    expect(() => service.gameSettings()).toThrow();
+    service.adminLogin("admin");
+    const previous = service.gameSettings();
+    const edited = service.saveGameSettings({ ...previous.active, consolation_percent: 25 }, previous.version);
+    expect(edited.active.consolation_percent).toBe(25);
+    expect(edited.defaults.consolation_percent).toBe(previous.defaults.consolation_percent);
+    expect(() => service.resetGameSettings(previous.version)).toThrow();
+    const reset = service.resetGameSettings(edited.version);
+    expect(reset.active).toEqual(previous.defaults);
+    expect(reset.version).not.toBe(edited.version);
   });
   it("разрешает две копии одного скина с разными ID", () => {
     const { service, ids, target } = granted(2);
-    expect(service.upgrade(ids, target.id)).toBe(true);
+    expect(attempt(service, ids, target.id).won).toBe(true);
     expect(service.current()!.inventory).toHaveLength(1);
     expect(service.current()!.inventory[0].skin_id).toBe(target.id);
   });

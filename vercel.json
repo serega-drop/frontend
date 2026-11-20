@@ -1,5 +1,6 @@
 {
   "rewrites": [
-    { "source": "/((?!assets/|favicon.svg).*)", "destination": "/index.html" }
+    { "source": "/api/v1/:path*", "destination": "https://backend-yyow.onrender.com/api/v1/:path*" },
+    { "source": "/((?!api/|assets/|audio/|favicon.svg).*)", "destination": "/index.html" }
   ]
 }

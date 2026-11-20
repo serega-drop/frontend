@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
-import { skins } from "../api/catalog";
+import { useGame } from "../app/context";
 import type { Skin } from "../api/types";
 import { SkinCard } from "./SkinCard";
 const PAGE_SIZE = 16;
@@ -19,7 +19,7 @@ export function CatalogPicker({
   const [sort, setSort] = useState("desc");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const filtered = skins
+  const filtered = useGame().skins()
     .filter(
       (s) =>
         s.price_minor > minimum &&
