@@ -794,9 +794,13 @@ main {
   border-top: 21px solid #ad7b28;
 }
 .ring-marker.marker-spinning {
-  animation: upgrade-spin var(--spin-duration)
-    var(--spin-easing, cubic-bezier(0.18, 0, 0.12, 1)) both;
+  animation: upgrade-spin var(--spin-duration) cubic-bezier(0.18, 0, 0.12, 1) both;
   will-change: transform;
+}
+.ring-marker.marker-braking {
+  animation:
+    upgrade-coast var(--coast-duration) linear both,
+    upgrade-brake var(--brake-duration) var(--brake-easing) var(--coast-duration) forwards;
 }
 .ring-marker.marker-waiting {
   animation: upgrade-wait var(--wait-duration) linear infinite;
@@ -1918,6 +1922,14 @@ th {
 @keyframes case-wait {
   from { transform: translate3d(var(--reel-start), 0, 0); }
   to { transform: translate3d(var(--reel-stop), 0, 0); }
+}
+@keyframes upgrade-coast {
+  from { transform: rotate(var(--spin-start)); }
+  to { transform: rotate(var(--brake-start)); }
+}
+@keyframes upgrade-brake {
+  from { transform: rotate(var(--brake-start)); }
+  to { transform: rotate(var(--spin-end)); }
 }
 @keyframes upgrade-spin {
   from {

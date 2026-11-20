@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowUpRight,
   Backpack,
@@ -27,7 +27,8 @@ import {
   UPGRADE_DURATION,
   WHEEL_MARK_STEP,
   WHEEL_WAIT_SPEED,
-  wheelHandoffEasing,
+  WHEEL_BRAKE_EASING,
+  wheelStopTiming,
   bonusSpinEnd,
   upgradeArc,
   nextRotation,
@@ -53,6 +54,7 @@ interface UpgradeAttempt {
   result: UpgradeResult;
   start: number;
   end: number;
+  handoffTime: number | null;
 }
 export function Upgrade({
   initialId,
@@ -110,6 +112,9 @@ export function Upgrade({
   const spin = bonusStep ? bonusFrame ?? attempt : attempt;
   const spinStart = spin?.start ?? rotation;
   const spinDuration = bonusStep ? BONUS_SPIN_DURATION : UPGRADE_DURATION;
+  const braking = phase === "spinning" && attempt
+    ? wheelStopTiming(attempt.end - attempt.start)
+    : undefined;
   const selected = sourceIds.flatMap(
     (id) => account?.inventory.find((i) => i.id === id) ?? [],
   );
@@ -151,6 +156,17 @@ export function Upgrade({
     });
   }, [hasBonusSteps]);
   const finishAnimation = useAnimationCompletion(busy, spinDuration, complete);
+
+  useLayoutEffect(() => {
+    if (phase !== "spinning" || attempt?.handoffTime == null) return;
+    // Match the timeline sample used to read the waiting angle, even if React commits a frame later.
+    for (const animation of markerElement.current?.getAnimations() ?? []) {
+      if (animation instanceof CSSAnimation &&
+          (animation.animationName === "upgrade-coast" || animation.animationName === "upgrade-brake")) {
+        animation.startTime = attempt.handoffTime;
+      }
+    }
+  }, [phase, attempt]);
 
   useEffect(() => {
     if (!bonus || (phase !== "bonus-ready" && phase !== "bonus-reveal")) return;
@@ -308,6 +324,7 @@ export function Upgrade({
       }, confirmed);
       if (!alive.current) return;
       const start = currentAngle();
+      const animationTime = document.timeline.currentTime;
       const end = nextRotation(start, result.landing_angle, 5);
       setAttempt({
         id: result.operation_id,
@@ -318,6 +335,7 @@ export function Upgrade({
         result,
         start,
         end,
+        handoffTime: typeof animationTime === "number" ? animationTime : null,
       });
       setRotation(end);
       setPhase(
@@ -477,23 +495,24 @@ export function Upgrade({
             </div>
             <span
               ref={markerElement}
-              className={`ring-marker ${waiting ? "marker-waiting" : busy ? "marker-spinning" : ""}`}
+              className={`ring-marker ${waiting ? "marker-waiting" : busy ? "marker-spinning" : ""}${braking ? " marker-braking" : ""}`}
               style={
                 {
                   transform: `rotate(${rotation}deg)`,
                   "--spin-start": `${spinStart}deg`,
                   "--spin-end": `${spin?.end ?? rotation}deg`,
                   "--spin-duration": `${spinDuration}ms`,
-                  "--spin-easing": phase === "spinning" && attempt
-                    ? wheelHandoffEasing(attempt.end - attempt.start)
-                    : undefined,
+                  "--brake-start": braking ? `${spinStart + braking.coastDistance}deg` : undefined,
+                  "--coast-duration": braking ? `${braking.coastDuration}ms` : undefined,
+                  "--brake-duration": braking ? `${braking.brakeDuration}ms` : undefined,
+                  "--brake-easing": braking ? WHEEL_BRAKE_EASING : undefined,
                   "--wait-start": `${rotation}deg`,
                   "--wait-end": `${rotation + 360}deg`,
                   "--wait-duration": `${360 / WHEEL_WAIT_SPEED}ms`,
                 } as CSSProperties
               }
               onAnimationEnd={(event) => {
-                if (event.target === event.currentTarget) finishAnimation();
+                if (event.target === event.currentTarget && event.animationName !== "upgrade-coast") finishAnimation();
               }}
             />
           </div>

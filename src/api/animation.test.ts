@@ -13,15 +13,18 @@ import {
   REEL_GAP,
   upgradeArc,
   upgradeLanding,
-  wheelHandoffEasing,
+  WHEEL_BRAKE_EASING,
+  wheelStopTiming,
   wheelMarkIndex,
 } from "./animation";
 describe("Геометрия анимаций", () => {
-  it.each([1800, 1980, 2160])("сохраняет кривую колеса и скорость на переходе (%s°)", (distance) => {
-    const easing = wheelHandoffEasing(distance);
-    const [startX, startY, endX, endY] = easing.slice(13, -1).split(",").map(Number);
-    expect([startX, endX, endY]).toEqual([0.18, 0.12, 1]);
-    expect(distance / UPGRADE_DURATION * startY / startX).toBeCloseTo(WHEEL_WAIT_SPEED, 10);
+  it.each([1800, 1980, 2160])("держит скорость до начала торможения колеса (%s°)", (distance) => {
+    const { coastDuration, brakeDuration, coastDistance } = wheelStopTiming(distance);
+    const [startX, startY, endX, endY] = WHEEL_BRAKE_EASING.slice(13, -1).split(",").map(Number);
+    expect(coastDuration).toBeGreaterThan(0);
+    expect(brakeDuration + coastDuration).toBeCloseTo(UPGRADE_DURATION, 10);
+    expect(coastDistance / coastDuration).toBeCloseTo(WHEEL_WAIT_SPEED, 10);
+    expect((distance - coastDistance) / brakeDuration * startY / startX).toBeCloseTo(WHEEL_WAIT_SPEED, 10);
     expect((1 - endY) / (1 - endX)).toBe(0);
   });
   it.each([

@@ -39,13 +39,21 @@ export function reelLandingPoint(sample: number, width = REEL_CARD_WIDTH) {
   return width * (0.16 + Math.max(0, Math.min(1, sample)) * 0.68);
 }
 
-export const WHEEL_WAIT_SPEED = 0.54; // degrees/ms
+export const WHEEL_WAIT_SPEED = 1; // degrees/ms
 export const REEL_WAIT_SPEED = 0.009; // cards/ms
 
-export function wheelHandoffEasing(distance: number) {
-  const firstTime = 0.18;
-  const firstProgress = firstTime * WHEEL_WAIT_SPEED * UPGRADE_DURATION / distance;
-  return `cubic-bezier(${firstTime}, ${firstProgress}, 0.12, 1)`;
+// The second half of cubic-bezier(0.18, 0, 0.12, 1), split at Bézier parameter 0.5
+// and rescaled to cover the braking segment from start to stop.
+const WHEEL_BRAKE_X1 = 0.1175 / 0.7625;
+const WHEEL_BRAKE_X2 = 0.3225 / 0.7625;
+export const WHEEL_BRAKE_EASING = `cubic-bezier(${WHEEL_BRAKE_X1}, 0.5, ${WHEEL_BRAKE_X2}, 1)`;
+
+export function wheelStopTiming(distance: number) {
+  const brakeStartSlope = 0.5 / WHEEL_BRAKE_X1;
+  // The linear segment and the braking segment start at the same degrees/ms.
+  const brakeDuration = (UPGRADE_DURATION - distance / WHEEL_WAIT_SPEED) / (1 - 1 / brakeStartSlope);
+  const coastDuration = UPGRADE_DURATION - brakeDuration;
+  return { coastDuration, brakeDuration, coastDistance: coastDuration * WHEEL_WAIT_SPEED };
 }
 
 export function spinHandoffEasing(distance: number, duration: number, speed: number) {
