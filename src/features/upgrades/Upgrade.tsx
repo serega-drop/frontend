@@ -204,15 +204,18 @@ export function Upgrade({
   }, [phase, attempt, bonus, onCollectionChange]);
   function chooseSource(id: string) {
     if (controlsLocked) return;
-    const next = sourceIds.includes(id)
-      ? sourceIds.filter((i) => i !== id)
-      : [...sourceIds, id];
+    const owned = account?.inventory ?? [];
+    if (!owned.some((item) => item.id === id)) return;
+    const activeIds = selected.map((item) => item.id);
+    const next = activeIds.includes(id)
+      ? activeIds.filter((itemId) => itemId !== id)
+      : [...activeIds, id];
     if (next.length > MAX_UPGRADE_ITEMS) {
       setError("Можно выбрать не больше 6 предметов");
       return;
     }
     const total = next.reduce((sum, id) => {
-      const item = account?.inventory.find((i) => i.id === id);
+      const item = owned.find((i) => i.id === id);
       return sum + (item ? service.skin(item.skin_id).price_minor : 0);
     }, 0);
     setSourceIds(next);
@@ -482,7 +485,7 @@ export function Upgrade({
                   "--spin-end": `${spin?.end ?? rotation}deg`,
                   "--spin-duration": `${spinDuration}ms`,
                   "--spin-easing": phase === "spinning" && attempt
-                    ? spinHandoffEasing(attempt.end - attempt.start, UPGRADE_DURATION, WHEEL_WAIT_SPEED, 0.18, 0.12)
+                    ? spinHandoffEasing(attempt.end - attempt.start, UPGRADE_DURATION, WHEEL_WAIT_SPEED)
                     : undefined,
                   "--wait-start": `${rotation}deg`,
                   "--wait-end": `${rotation + 360}deg`,
@@ -504,17 +507,12 @@ export function Upgrade({
               ? `Спин ${bonusIndex + 1} из ${bonus?.steps.length}`
               : phase === "requesting" ? "Запускаем…" : busy ? "Апгрейд…" : "Апгрейд"}
           </button>
-          <div className="game-action-status upgrade-status-slot">
-            <div data-inactive={!waiting || undefined}>
-              <LoadingStatus>Получаем результат апгрейда…</LoadingStatus>
-            </div>
-            <span className="upgrade-cost-note" role="status" data-inactive={waiting || undefined}>
-              {phase === "bonus-reveal" && bonusStep
-                ? bonusStep.won ? "Успех" : "Стоимость без изменений"
-                : bonusStep ? "Бонусная серия"
-                : hasSources ? "Все выбранные предметы будут использованы" : "Выбери от 1 до 6 предметов"}
-            </span>
-          </div>
+          <span className="upgrade-cost-note" role="status">
+            {phase === "bonus-reveal" && bonusStep
+              ? bonusStep.won ? "Успех" : "Стоимость без изменений"
+              : bonusStep ? "Бонусная серия"
+              : hasSources ? "Все выбранные предметы будут использованы" : "Выбери от 1 до 6 предметов"}
+          </span>
         </div>
         <div className="selection-column">
           {bonusStep ? (

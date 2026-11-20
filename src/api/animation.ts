@@ -39,11 +39,12 @@ export function reelLandingPoint(sample: number, width = REEL_CARD_WIDTH) {
   return width * (0.16 + Math.max(0, Math.min(1, sample)) * 0.68);
 }
 
-// A linear lead-in joins the result curve at the same velocity.
 export const WHEEL_WAIT_SPEED = 0.54; // degrees/ms
 export const REEL_WAIT_SPEED = 0.009; // cards/ms
-export function spinHandoffEasing(
-  distance: number, duration: number, speed: number, x1: number, x2: number,
-) {
-  return `cubic-bezier(${x1}, ${x1 * speed * duration / distance}, ${x2}, 1)`;
+
+export function spinHandoffEasing(distance: number, duration: number, speed: number) {
+  const initialSlope = speed * duration / distance;
+  const firstTime = 1 / 3;
+  // Keep the first two control segments at the lead-in slope, then flatten to zero.
+  return `cubic-bezier(${firstTime}, ${firstTime * initialSlope}, ${1 / initialSlope}, 1)`;
 }

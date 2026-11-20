@@ -819,6 +819,7 @@ main {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: #8e7b55;
+  margin-top: 10px;
   text-align: center;
 }
 .target-controls {
@@ -2798,6 +2799,9 @@ th {
     width: 18px;
   }
   .upgrade-cost-note {
+    grid-column: 2;
+    grid-row: 3;
+    margin-top: 9px;
     font-size: 0.53rem;
     line-height: 1.6;
     max-width: 140px;
@@ -4605,32 +4609,6 @@ select {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-}
-
-.game-action-status {
-  display: grid;
-  place-items: center;
-  min-width: 0;
-}
-
-.game-action-status > * {
-  grid-area: 1 / 1;
-}
-
-.game-action-status > [data-inactive] {
-  visibility: hidden;
-}
-
-.game-action-status > [data-inactive] svg {
-  animation-play-state: paused;
-}
-
-.upgrade-status-slot {
-  grid-column: 2;
-  grid-row: 3;
-  margin-block-start: 0.55rem;
-  font-size: 0.75rem;
-  text-align: center;
 }
 
 .loading-status svg {

@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, ChevronRight } from "lucide-react";
 import type { GameCase, InventoryItem, Skin } from "../../api/types";
 import { useGame, useGameRestoring } from "../../app/context";
 import { SkinCard, SkinImage } from "../../components/SkinCard";
-import { LoadingStatus } from "../../components/LoadingStatus";
 import { Price } from "../../components/Price";
 import { DropResult } from "../../components/DropResult";
 import { useAnimationCompletion } from "../../components/useAnimationCompletion";
@@ -245,7 +244,7 @@ function CaseDetail({
                   transform: `translate3d(${-roll.stop}px,0,0)`,
                   "--reel-start": `${-roll.start}px`,
                   "--roll-easing": spinHandoffEasing(roll.stop - roll.start, CASE_DURATION,
-                    REEL_WAIT_SPEED * (stride ?? REEL_CARD_WIDTH + REEL_GAP), 0.16, 0.11),
+                    REEL_WAIT_SPEED * (stride ?? REEL_CARD_WIDTH + REEL_GAP)),
                   "--reel-stop": `${-roll.stop}px`,
                   "--roll-duration": `${CASE_DURATION}ms`,
                 } as CSSProperties)
@@ -295,10 +294,7 @@ function CaseDetail({
         <p className="error" role="alert">
           {error}
         </p>
-        <div className="game-action-status" aria-live="polite">
-          <div data-inactive={!waiting || undefined}>
-            <LoadingStatus>Получаем результат открытия…</LoadingStatus>
-          </div>
+        <div aria-live="polite">
           {result && !busy && (
             <span className="drop-result">
               Твой дроп:{" "}

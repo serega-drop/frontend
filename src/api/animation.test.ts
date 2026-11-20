@@ -17,13 +17,25 @@ import {
 } from "./animation";
 describe("Геометрия анимаций", () => {
   it.each([
-    [1800, UPGRADE_DURATION, WHEEL_WAIT_SPEED, 0.18, 0.12],
-    [32 * 200, CASE_DURATION, REEL_WAIT_SPEED * 200, 0.16, 0.11],
-  ])("сохраняет скорость в момент перехода к остановке (%s)", (distance, duration, speed, x1, x2) => {
-    const easing = spinHandoffEasing(distance, duration, speed, x1, x2);
+    [1800, UPGRADE_DURATION, WHEEL_WAIT_SPEED],
+    [2160, UPGRADE_DURATION, WHEEL_WAIT_SPEED],
+    [31 * 200, CASE_DURATION, REEL_WAIT_SPEED * 200],
+    [39 * 200, CASE_DURATION, REEL_WAIT_SPEED * 200],
+  ])("переходит с постоянной скорости к замедлению (%s)", (distance, duration, speed) => {
+    const easing = spinHandoffEasing(distance, duration, speed);
     const [startX, startY, endX, endY] = easing.slice(13, -1).split(",").map(Number);
-    expect(distance * (startY / startX) / duration).toBeCloseTo(speed, 10);
-    expect((1 - endY) / (1 - endX)).toBe(0);
+    const slope = (t: number, start: number, end: number) =>
+      (1 - t) ** 2 * start + 2 * t * (1 - t) * (end - start) + t ** 2 * (1 - end);
+    let previous = speed;
+    for (let step = 0; step <= 100; step++) {
+      const t = step / 100;
+      const velocity = distance / duration * slope(t, startY, endY) / slope(t, startX, endX);
+      expect(velocity).toBeGreaterThanOrEqual(0);
+      expect(velocity).toBeLessThanOrEqual(previous + 1e-10);
+      if (step === 0) expect(velocity).toBeCloseTo(speed, 10);
+      previous = velocity;
+    }
+    expect(previous).toBe(0);
   });
   it("показывает исходы бонусной серии с той же шкалой и продолжает вращение", () => {
     let rotation = 2023;
