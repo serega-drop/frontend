@@ -13,7 +13,8 @@ import {
   VolumeX,
   Wallet,
 } from "lucide-react";
-import { useGame } from "./context";
+import { useGame, useGameRestoring } from "./context";
+import { LoadingStatus } from "../components/LoadingStatus";
 import { Price } from "../components/Price";
 import { SkinImage } from "../components/SkinCard";
 import { Cases } from "../features/cases/Cases";
@@ -50,6 +51,7 @@ export default function App() {
   const service = useGame(),
     account = service.current();
   const cases = service.cases();
+  const restoring = useGameRestoring();
   const [collectionSnapshot, setCollectionSnapshot] = useState<InventoryItem[] | null>(null);
   const collection = collectionSnapshot ?? account?.inventory ?? [];
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -78,6 +80,7 @@ export default function App() {
     }
   }
   function requireLogin(action: () => void) {
+    if (restoring) return;
     if (service.current()) action();
     else {
       pending.current = action;
@@ -119,7 +122,7 @@ export default function App() {
               aria-current={page === id ? "page" : undefined}
               onClick={(e) => {
                 e.preventDefault();
-                if (id === "inventory" || id === "history")
+                if (!restoring && (id === "inventory" || id === "history"))
                   requireLogin(() => navigate(id));
                 else {
                   if (id === "cases") setCaseSlug(undefined);
@@ -153,7 +156,7 @@ export default function App() {
           >
             <CircleHelp size={17} />
           </button>
-          {account ? (
+          {restoring ? <LoadingStatus>Восстанавливаем сессию…</LoadingStatus> : account ? (
             <>
               <button className="balance" aria-label="Запросить золото" onClick={pay}>
                 <Wallet size={15} />
@@ -207,7 +210,7 @@ export default function App() {
                 );
               })}
             </div>
-            <button className="sidebar-pay" onClick={pay}>
+            <button className="sidebar-pay" disabled={restoring} onClick={pay}>
               <Plus size={14} />
               <span>
                 Запросить золото<small>SEREGA PAY</small>
@@ -215,7 +218,7 @@ export default function App() {
             </button>
             <div className="sidebar-label collection-label">
               <Backpack size={12} /> МОЯ КОЛЛЕКЦИЯ{" "}
-              <span>{collection.length}</span>
+              {!restoring && <span>{collection.length}</span>}
             </div>
             {collection.length ? (
               <div className="sidebar-owned">
@@ -237,7 +240,7 @@ export default function App() {
               </div>
             ) : (
               <p className="sidebar-empty">
-                {account
+                {restoring ? "Загружаем коллекцию…" : account
                   ? "В инвентаре пока нет предметов"
                   : "Войди, чтобы увидеть свои предметы"}
               </p>
@@ -250,7 +253,9 @@ export default function App() {
         )}
         <div className="workspace-content">
           <main>
-            {page === "admin" ? (
+            {restoring && (page === "admin" || page === "inventory" || page === "history") ? (
+              <section className="section"><LoadingStatus>Восстанавливаем сессию…</LoadingStatus></section>
+            ) : page === "admin" ? (
               <Admin />
             ) : page === "cases" ? (
               <Cases

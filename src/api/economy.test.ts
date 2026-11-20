@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDemoService, freshDatabase } from "./demo";
 import { upgradeLanding } from "./animation";
+import { nearestUpgradeTarget } from "./economy";
 import {
   CASE_GOOD_DROP_BASE_CHANCE,
   CASE_GOOD_DROP_CAP,
@@ -14,6 +15,19 @@ import {
   getSkin,
   skins,
 } from "./catalog";
+
+it("подбирает цель по разнице шансов и при равенстве учитывает цену и ID", () => {
+  const catalog = [
+    { ...skins[0], id: "stake", price_minor: 100 },
+    { ...skins[0], id: "z", price_minor: 200 },
+    { ...skins[0], id: "b", price_minor: 300 },
+    { ...skins[0], id: "a", price_minor: 200 },
+  ];
+  expect(nearestUpgradeTarget(catalog, 100, 90, 37)?.id).toBe("b");
+  expect(nearestUpgradeTarget(catalog, 100, 90, 37.5)?.id).toBe("a");
+  expect(nearestUpgradeTarget(catalog, 300, 90, 37)).toBeUndefined();
+});
+
 function memoryStorage() {
   const values = new Map<string, string>();
   return {

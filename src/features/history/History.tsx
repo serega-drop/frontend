@@ -67,7 +67,7 @@ export function History({ onDeposit, recentRequest }: { onDeposit: () => void; r
                 </div>
               </div>
               {request.status !== "rejected" && (
-                <div>
+                <div className="deposit-amount">
                   <small>{request.status === "approved" ? "Зачислено" : "Ожидается"}</small>
                   <Price value={request.credited_minor} />
                 </div>

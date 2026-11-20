@@ -794,8 +794,12 @@ main {
   border-top: 21px solid #ad7b28;
 }
 .ring-marker.marker-spinning {
-  animation: upgrade-spin var(--spin-duration) cubic-bezier(0.18, 0, 0.12, 1)
-    both;
+  animation: upgrade-spin var(--spin-duration)
+    var(--spin-easing, cubic-bezier(0.18, 0, 0.12, 1)) both;
+  will-change: transform;
+}
+.ring-marker.marker-waiting {
+  animation: upgrade-wait var(--wait-duration) linear infinite;
   will-change: transform;
 }
 .upgrade-submit {
@@ -815,7 +819,6 @@ main {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: #8e7b55;
-  margin-top: 10px;
   text-align: center;
 }
 .target-controls {
@@ -1406,7 +1409,11 @@ main {
   width: max-content;
 }
 .reel-spinning {
-  animation: case-roll var(--roll-duration) cubic-bezier(0.16, 0, 0.11, 1) both;
+  animation: case-roll var(--roll-duration) var(--roll-easing) both;
+  will-change: transform;
+}
+.reel-waiting {
+  animation: case-wait var(--roll-duration) linear infinite;
   will-change: transform;
 }
 .reel-item {
@@ -1902,6 +1909,14 @@ th {
   to {
     transform: rotate(360deg);
   }
+}
+@keyframes upgrade-wait {
+  from { transform: rotate(var(--wait-start)); }
+  to { transform: rotate(var(--wait-end)); }
+}
+@keyframes case-wait {
+  from { transform: translate3d(var(--reel-start), 0, 0); }
+  to { transform: translate3d(var(--reel-stop), 0, 0); }
 }
 @keyframes upgrade-spin {
   from {
@@ -2783,9 +2798,6 @@ th {
     width: 18px;
   }
   .upgrade-cost-note {
-    grid-column: 2;
-    grid-row: 3;
-    margin-top: 9px;
     font-size: 0.53rem;
     line-height: 1.6;
     max-width: 140px;
@@ -3311,7 +3323,9 @@ th {
 @media (prefers-reduced-motion: reduce) {
   .result-skin-image,
   .marker-spinning,
-  .reel-spinning {
+  .marker-waiting,
+  .reel-spinning,
+  .reel-waiting {
     animation: none !important;
   }
 }
@@ -4593,6 +4607,32 @@ select {
   gap: 0.6rem;
 }
 
+.game-action-status {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.game-action-status > * {
+  grid-area: 1 / 1;
+}
+
+.game-action-status > [data-inactive] {
+  visibility: hidden;
+}
+
+.game-action-status > [data-inactive] svg {
+  animation-play-state: paused;
+}
+
+.upgrade-status-slot {
+  grid-column: 2;
+  grid-row: 3;
+  margin-block-start: 0.55rem;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 .loading-status svg {
   flex: none;
   color: var(--neon-primary-bright);
@@ -4605,4 +4645,60 @@ select {
 
 @media (prefers-reduced-motion: reduce) {
   .loading-status svg { animation: none; }
+}
+
+.deposit-amount {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-self: end;
+  gap: 0.2rem 0.6rem;
+}
+
+.deposit-amount small {
+  color: var(--muted);
+}
+
+.form-stack > .request-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  align-self: start;
+}
+
+.admin-deposit-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.admin-deposit-row .deposit-main {
+  overflow-wrap: anywhere;
+}
+
+.admin-deposit-row > .result-actions {
+  grid-column: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-deposit-row > .result-actions > button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .history-deposit-list .deposit-row {
+    grid-template-columns: 31px minmax(0, 1fr);
+  }
+
+  .deposit-amount {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .admin-deposit-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-deposit-row > .result-actions {
+    justify-content: flex-start;
+  }
 }

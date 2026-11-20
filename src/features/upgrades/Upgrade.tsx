@@ -8,7 +8,9 @@ import {
   Target,
   X,
 } from "lucide-react";
-import { useGame } from "../../app/context";
+import { useGame, useGameRestoring } from "../../app/context";
+import { defaultSettings } from "../../api/client";
+import { nearestUpgradeTarget } from "../../api/economy";
 import type { UpgradeInput, UpgradeQuote, UpgradeResult } from "../../api/client";
 import { Modal } from "../../components/Modal";
 import type { Skin, InventoryItem } from "../../api/types";
@@ -24,6 +26,8 @@ import {
   MAX_UPGRADE_ITEMS,
   UPGRADE_DURATION,
   WHEEL_MARK_STEP,
+  WHEEL_WAIT_SPEED,
+  spinHandoffEasing,
   bonusSpinEnd,
   upgradeArc,
   nextRotation,
@@ -35,6 +39,10 @@ interface BonusFrame {
   index: number;
   start: number;
   end: number;
+}
+interface QuoteRequest {
+  input: UpgradeInput;
+  result?: Promise<UpgradeQuote | undefined>;
 }
 interface UpgradeAttempt {
   id: string;
@@ -59,6 +67,7 @@ export function Upgrade({
 }) {
   const service = useGame(),
     account = service.current();
+  const restoring = useGameRestoring();
   const [sourceIds, setSourceIds] = useState<string[]>(
     initialId ? [initialId] : [],
   );
@@ -66,13 +75,22 @@ export function Upgrade({
   const [quote, setQuote] = useState<UpgradeQuote>();
   const [quoting, setQuoting] = useState(false);
   const [desiredChance, setDesiredChance] = useState("");
-  const quoteVersion = useRef(0);
+  const pendingQuote = useRef<QuoteRequest>(undefined);
+  const multiplier = useRef(defaultSettings.upgrade_multiplier);
+  const alive = useRef(true);
   const quoteTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(quoteTimer.current), []);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      pendingQuote.current = undefined;
+      window.clearTimeout(quoteTimer.current);
+      onCollectionChange(null);
+    };
+  }, [onCollectionChange]);
   const [attempt, setAttempt] = useState<UpgradeAttempt | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [bonusFrame, setBonusFrame] = useState<BonusFrame | null>(null);
-  useEffect(() => () => onCollectionChange(null), [onCollectionChange]);
   const [rotation, setRotation] = useState(0);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -80,6 +98,8 @@ export function Upgrade({
   const lock = useRef(false);
   const markerElement = useRef<HTMLSpanElement>(null);
   const busy = phase === "spinning" || phase === "bonus-spinning";
+  const waiting = phase === "requesting";
+  const moving = (waiting || busy) && !matchMedia("(prefers-reduced-motion: reduce)").matches;
   const controlsLocked = phase !== "idle";
   const bonus = attempt?.result.bonus;
   const bonusIndex = bonusFrame?.index ?? 0;
@@ -88,7 +108,6 @@ export function Upgrade({
     ? bonusStep?.value_minor
     : bonus?.steps[bonusIndex - 1]?.value_minor ?? bonus?.initial_minor;
   const spin = bonusStep ? bonusFrame ?? attempt : attempt;
-  const spinKey = bonusStep ? `bonus:${bonusIndex}` : attempt?.id ?? "rest";
   const spinStart = spin?.start ?? rotation;
   const spinDuration = bonusStep ? BONUS_SPIN_DURATION : UPGRADE_DURATION;
   const selected = sourceIds.flatMap(
@@ -106,8 +125,9 @@ export function Upgrade({
       : target && target.price_minor > total
         ? target
         : null;
-  const chance =
-    bonusStep?.chance ?? (attempt && controlsLocked ? attempt.chance : quote?.chance ?? 0);
+  const chance = bonusStep?.chance ?? (attempt && controlsLocked
+    ? attempt.chance
+    : quote?.chance ?? (validTarget ? multiplier.current * total / validTarget.price_minor : 0));
   const arc = upgradeArc(chance);
   const visibleInventory =
     attempt && phase !== "result" ? attempt.inventory : (account?.inventory ?? []);
@@ -150,10 +170,10 @@ export function Upgrade({
   }, [bonus, bonusIndex, phase, rotation]);
   useEffect(() => {
     const marker = markerElement.current;
-    if (!busy || !marker) return;
+    if (!moving || !marker) return;
 
     const stopChime = playGameSound("game-chime");
-    let lastMark = wheelMarkIndex(spinStart);
+    let lastMark: number | undefined;
     let frame: number;
     const playCrossings = () => {
       if (gameSoundEnabled()) {
@@ -162,10 +182,8 @@ export function Upgrade({
           const matrix = new DOMMatrixReadOnly(transform);
           const angle = Math.atan2(matrix.m12, matrix.m11) * 180 / Math.PI;
           const mark = wheelMarkIndex(angle);
-          if (mark !== lastMark) {
-            lastMark = mark;
-            playGameSound("case-tick");
-          }
+          if (lastMark !== undefined && mark !== lastMark) playGameSound("case-tick");
+          lastMark = mark;
         }
       }
       frame = requestAnimationFrame(playCrossings);
@@ -175,7 +193,7 @@ export function Upgrade({
       cancelAnimationFrame(frame);
       stopChime();
     };
-  }, [busy, spinKey, spinStart]);
+  }, [moving]);
   useEffect(() => {
     if (!attempt) return;
     if (phase === "bonus-ready" && !attempt.result.won) return playGameSound("upgrade-loss");
@@ -206,45 +224,88 @@ export function Upgrade({
   }
   function clearQuote() {
     window.clearTimeout(quoteTimer.current);
-    quoteVersion.current++;
+    pendingQuote.current = undefined;
     setQuote(undefined);
     setQuoting(false);
   }
-  async function requestQuote(input: UpgradeInput) {
+  function fetchQuote(request: QuoteRequest) {
     window.clearTimeout(quoteTimer.current);
-    const version = ++quoteVersion.current;
-    setQuote(undefined);
-    setQuoting(true);
-    setError("");
-    try {
-      const next = await service.quoteUpgrade(input);
-      if (version === quoteVersion.current) {
+    return (request.result ??= (async () => {
+      const { input } = request;
+      try {
+        const next = await service.quoteUpgrade(input);
+        if (pendingQuote.current !== request) return;
+        const stake = (service.current()?.inventory ?? [])
+          .filter((item) => input.inventory_item_ids.includes(item.id))
+          .reduce((sum, item) => sum + service.skin(item.skin_id).price_minor, 0);
+        if (stake > 0) multiplier.current = next.chance * next.target.price_minor / stake;
         setQuote(next);
         setTarget(next.target);
+        return next;
+      } catch (reason) {
+        if (pendingQuote.current === request) setError((reason as Error).message);
+      } finally {
+        if (pendingQuote.current === request) setQuoting(false);
       }
-    } catch (reason) {
-      if (version === quoteVersion.current) setError((reason as Error).message);
-    } finally {
-      if (version === quoteVersion.current) setQuoting(false);
-    }
+    })());
   }
-  function quick(input: Pick<UpgradeInput, "desired_chance" | "target_multiplier">) {
-    if (hasSources && !controlsLocked)
-      void requestQuote({ inventory_item_ids: selected.map((item) => item.id), ...input });
+  function requestQuote(input: UpgradeInput, delay = 0) {
+    clearQuote();
+    const request = { input };
+    pendingQuote.current = request;
+    setQuoting(true);
+    setError("");
+    if (delay) quoteTimer.current = window.setTimeout(() => void fetchQuote(request), delay);
+    else void fetchQuote(request);
+  }
+  function quick(input: Pick<UpgradeInput, "desired_chance" | "target_multiplier">, delay = 0) {
+    if (!hasSources || controlsLocked) return;
+    const desired = input.desired_chance ?? multiplier.current / (input.target_multiplier ?? 2);
+    setTarget(nearestUpgradeTarget(service.skins(), total, multiplier.current, desired) ?? null);
+    requestQuote({ inventory_item_ids: selected.map((item) => item.id), ...input }, delay);
+  }
+  function currentAngle() {
+    const marker = markerElement.current;
+    if (!marker) return rotation;
+    const transform = getComputedStyle(marker).transform;
+    if (transform === "none") return rotation;
+    const matrix = new DOMMatrixReadOnly(transform);
+    return Math.atan2(matrix.m12, matrix.m11) * 180 / Math.PI;
+  }
+  function resetWaiting() {
+    setRotation(currentAngle());
+    lock.current = false;
+    onCollectionChange(null);
+    setPhase("idle");
   }
   async function run() {
-    if (!hasSources || !validTarget || !quote || lock.current) return;
+    const request = pendingQuote.current;
+    if (!hasSources || !validTarget || (!quote && (!quoting || !request)) || lock.current) return;
     unlockGameAudio();
     setError("");
     lock.current = true;
     onCollectionChange(account?.inventory ?? []);
     setPhase("requesting");
     try {
+      const confirmed = quote ?? (request && await fetchQuote(request));
+      if (!alive.current) return;
+      if (!confirmed) {
+        resetWaiting();
+        return;
+      }
+      if (confirmed.target.id !== validTarget.id || confirmed.target.price_minor !== validTarget.price_minor ||
+          confirmed.chance.toFixed(2) !== chance.toFixed(2)) {
+        resetWaiting();
+        setError("Условия изменились. Проверьте цель и шанс и нажмите «Апгрейд» ещё раз.");
+        return;
+      }
       const result = await service.upgrade({
         inventory_item_ids: sources.map((item) => item.id),
         target_skin_id: validTarget.id,
-      }, quote);
-      const end = nextRotation(rotation, result.landing_angle, 5);
+      }, confirmed);
+      if (!alive.current) return;
+      const start = currentAngle();
+      const end = nextRotation(start, result.landing_angle, 5);
       setAttempt({
         id: result.operation_id,
         sources: [...sources],
@@ -252,7 +313,7 @@ export function Upgrade({
         target: validTarget,
         chance: result.chance,
         result,
-        start: rotation,
+        start,
         end,
       });
       setRotation(end);
@@ -262,9 +323,8 @@ export function Upgrade({
           : "spinning",
       );
     } catch (e) {
-      lock.current = false;
-      onCollectionChange(null);
-      setPhase("idle");
+      if (!alive.current) return;
+      resetWaiting();
       const failure = e as Error & { status?: number };
       if (failure.status === 409) clearQuote();
       setError(failure.message);
@@ -376,7 +436,7 @@ export function Upgrade({
         </div>
         <div className={`chance-block ${busy ? "is-upgrading" : ""}`}>
           <div
-            className={`chance-ring ${bonusStep || (hasSources && quote) ? "chance-ready" : ""}`}
+            className={`chance-ring ${bonusStep || (hasSources && validTarget) ? "chance-ready" : ""}`}
             style={
               {
                 "--arc-start": `${arc.start}deg`,
@@ -395,7 +455,8 @@ export function Upgrade({
             )}
             <div className="chance-core">
               <strong>
-                {(bonusStep || (hasSources && (quote || attempt)))
+                {hasSources && validTarget && !quote && !attempt && !bonusStep && "≈"}
+                {bonusStep || (hasSources && validTarget)
                   ? chance.toLocaleString("ru-RU", { maximumFractionDigits: 2 })
                   : "?"}
                 <span>%</span>
@@ -403,24 +464,29 @@ export function Upgrade({
               <span>
                 {bonusStep
                   ? `БОНУСНЫЙ СПИН ${bonusIndex + 1}/${bonus?.steps.length}`
-                  : busy
+                  : waiting || busy
                     ? "ИДЁТ АПГРЕЙД"
-                    : quoting ? "РАССЧИТЫВАЕМ"
-                  : hasSources && quote
+                    : quoting ? "ПОДТВЕРЖДАЕМ ШАНС"
+                  : hasSources && validTarget
                     ? "ШАНС УСПЕХА"
                     : "ВЫБЕРИ ПРЕДМЕТЫ"}
               </span>
             </div>
             <span
-              key={spinKey}
               ref={markerElement}
-              className={`ring-marker ${busy ? "marker-spinning" : ""}`}
+              className={`ring-marker ${waiting ? "marker-waiting" : busy ? "marker-spinning" : ""}`}
               style={
                 {
                   transform: `rotate(${rotation}deg)`,
                   "--spin-start": `${spinStart}deg`,
                   "--spin-end": `${spin?.end ?? rotation}deg`,
                   "--spin-duration": `${spinDuration}ms`,
+                  "--spin-easing": phase === "spinning" && attempt
+                    ? spinHandoffEasing(attempt.end - attempt.start, UPGRADE_DURATION, WHEEL_WAIT_SPEED, 0.18, 0.12)
+                    : undefined,
+                  "--wait-start": `${rotation}deg`,
+                  "--wait-end": `${rotation + 360}deg`,
+                  "--wait-duration": `${360 / WHEEL_WAIT_SPEED}ms`,
                 } as CSSProperties
               }
               onAnimationEnd={(event) => {
@@ -430,7 +496,7 @@ export function Upgrade({
           </div>
           <button
             className="primary upgrade-submit"
-            disabled={!hasSources || !validTarget || !quote || quoting || controlsLocked}
+            disabled={!hasSources || !validTarget || (!quote && !quoting) || controlsLocked}
             onClick={run}
           >
             <ArrowUpRight size={23} />
@@ -438,13 +504,17 @@ export function Upgrade({
               ? `Спин ${bonusIndex + 1} из ${bonus?.steps.length}`
               : phase === "requesting" ? "Запускаем…" : busy ? "Апгрейд…" : "Апгрейд"}
           </button>
-          {phase === "requesting" && <LoadingStatus>Получаем результат апгрейда…</LoadingStatus>}
-          <span className="upgrade-cost-note" role="status">
-            {phase === "bonus-reveal" && bonusStep
-              ? bonusStep.won ? "Успех" : "Стоимость без изменений"
-              : bonusStep ? "Бонусная серия"
-              : hasSources ? "Все выбранные предметы будут использованы" : "Выбери от 1 до 6 предметов"}
-          </span>
+          <div className="game-action-status upgrade-status-slot">
+            <div data-inactive={!waiting || undefined}>
+              <LoadingStatus>Получаем результат апгрейда…</LoadingStatus>
+            </div>
+            <span className="upgrade-cost-note" role="status" data-inactive={waiting || undefined}>
+              {phase === "bonus-reveal" && bonusStep
+                ? bonusStep.won ? "Успех" : "Стоимость без изменений"
+                : bonusStep ? "Бонусная серия"
+                : hasSources ? "Все выбранные предметы будут использованы" : "Выбери от 1 до 6 предметов"}
+            </span>
+          </div>
         </div>
         <div className="selection-column">
           {bonusStep ? (
@@ -506,11 +576,8 @@ export function Upgrade({
                       value={desiredChance} onChange={(event) => {
                         const { value, valueAsNumber, validity } = event.target;
                         setDesiredChance(value);
-                        clearQuote();
-                        if (value && validity.valid) {
-                          setQuoting(true);
-                          quoteTimer.current = window.setTimeout(() => quick({ desired_chance: valueAsNumber }), 250);
-                        }
+                        if (value && validity.valid) quick({ desired_chance: valueAsNumber }, 250);
+                        else clearQuote();
                       }} />
                     <button type="submit" disabled={!hasSources || !desiredChance || controlsLocked}>Подобрать</button>
                   </form>
@@ -544,7 +611,7 @@ export function Upgrade({
       </div>
       <div
         className={`upgrade-columns ${busy ? "locked" : ""}`}
-        aria-busy={busy}
+        aria-busy={waiting || busy}
       >
         <section className="item-panel" id="upgrade-inventory">
           <div className="item-panel-heading">
@@ -578,7 +645,7 @@ export function Upgrade({
               <option value="new">Сначала новые</option>
             </select>
           </div>
-          {!account ? (
+          {restoring ? <LoadingStatus>Загружаем инвентарь…</LoadingStatus> : !account ? (
             <div className="inventory-guest">
               <Backpack size={34} />
               <h3>Войди в аккаунт</h3>

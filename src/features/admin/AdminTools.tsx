@@ -73,7 +73,7 @@ export function RequestsPanel({ accountId }: { accountId?: string }) {
         <h2>{accountId ? "Заявки игрока" : "Заявки на золото"}</h2>
         <button className="secondary" disabled={loading || Boolean(busy)} onClick={reload}>Обновить</button>
       </div>
-      <label className="checkbox-label">
+      <label className="checkbox-label request-filter">
         <input type="checkbox" checked={onlyPending} onChange={(event) => setOnlyPending(event.target.checked)} />
         Только ожидающие
       </label>
@@ -82,11 +82,16 @@ export function RequestsPanel({ accountId }: { accountId?: string }) {
       {visible?.length ? (
         <div className="deposit-list">
           {visible.map((request) => (
-            <article className="deposit-row" key={request.id}>
+            <article className="deposit-row admin-deposit-row" key={request.id}>
               <div className="deposit-main">
                 <strong>{service.accounts().find((account) => account.id === request.account_id)?.name ?? request.account_id}</strong>
-                <span>{requestStatusLabel[request.status]} · {request.method} · {date.format(new Date(request.created_at))}</span>
-                <span>{request.rubles} ₽ {request.promo && `· ${request.promo}`}</span>
+                <div className="deposit-tags">
+                  <span>{requestStatusLabel[request.status]}</span>
+                  <span>{request.method}</span>
+                  <span>{request.rubles.toLocaleString("ru-RU")} ₽</span>
+                  {request.promo && <span>{request.promo}</span>}
+                </div>
+                <time dateTime={request.created_at}>{date.format(new Date(request.created_at))}</time>
                 {request.status !== "rejected" && <Price value={request.credited_minor} />}
               </div>
               {request.status === "pending" && (

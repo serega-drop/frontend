@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, ArrowRight, ChevronRight } from "lucide-react";
 import type { GameCase, InventoryItem, Skin } from "../../api/types";
-import { useGame } from "../../app/context";
+import { useGame, useGameRestoring } from "../../app/context";
 import { SkinCard, SkinImage } from "../../components/SkinCard";
 import { LoadingStatus } from "../../components/LoadingStatus";
 import { Price } from "../../components/Price";
@@ -12,6 +12,8 @@ import {
   CASE_DURATION,
   REEL_CARD_WIDTH,
   REEL_GAP,
+  REEL_WAIT_SPEED,
+  spinHandoffEasing,
   randomUnit,
   reelLandingPoint,
   reelStopOffset,
@@ -110,21 +112,30 @@ function CaseDetail({
   onCollectionChange: (items: InventoryItem[] | null) => void;
 }) {
   const service = useGame();
+  const restoring = useGameRestoring();
   const [phase, setPhase] = useState<
     "idle" | "requesting" | "spinning" | "result" | "settled"
   >("idle");
   const [result, setResult] = useState<Skin | null>(null);
   const [error, setError] = useState("");
   const [roll, setRoll] = useState<{
-    id: string;
     reel: Skin[];
+    start: number;
     stop: number;
     winner: number;
-    stride: number;
   } | null>(null);
+  const [leadIn, setLeadIn] = useState<{
+    reel: Skin[];
+    start: number;
+    period: number;
+    stride: number;
+  }>();
   const lock = useRef(false);
   const spinning = phase === "spinning";
-  const busy = spinning || phase === "requesting";
+  const waiting = phase === "requesting";
+  const busy = spinning || waiting;
+  const stride = leadIn?.stride;
+  const moving = busy && !matchMedia("(prefers-reduced-motion: reduce)").matches;
   const alive = useRef(true);
   const reelElement = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -142,10 +153,9 @@ function CaseDetail({
   );
   useEffect(() => {
     const reel = reelElement.current;
-    if (!spinning || !roll || !reel) return;
+    if (!moving || !stride || !reel) return;
 
-    const { stride } = roll;
-    let card = 0;
+    let card: number | undefined;
     let frame: number;
     const playCrossings = () => {
       if (gameSoundEnabled()) {
@@ -153,17 +163,15 @@ function CaseDetail({
         if (transform !== "none") {
           const offset = -new DOMMatrixReadOnly(transform).m41;
           const next = Math.floor(offset / stride);
-          if (next > card) {
-            card = next;
-            playGameSound("case-tick");
-          }
+          if (card !== undefined && next !== card) playGameSound("case-tick");
+          card = next;
         }
       }
       frame = requestAnimationFrame(playCrossings);
     };
     frame = requestAnimationFrame(playCrossings);
     return () => cancelAnimationFrame(frame);
-  }, [spinning, roll]);
+  }, [moving, stride]);
   useEffect(() => {
     if (phase === "result") return playGameSound("case-drop");
   }, [phase]);
@@ -173,31 +181,35 @@ function CaseDetail({
     setError("");
     lock.current = true;
     onCollectionChange(service.current()?.inventory ?? []);
+    const element = reelElement.current;
+    const width = element?.firstElementChild?.getBoundingClientRect().width || REEL_CARD_WIDTH;
+    const measuredGap = element ? parseFloat(getComputedStyle(element).columnGap) : NaN;
+    const gap = Number.isFinite(measuredGap) ? measuredGap : REEL_GAP;
+    const cardStride = width + gap;
+    const first = roll ? Math.max(0, roll.winner - 6) : 0;
+    const cycle = roll ? roll.reel.slice(first, roll.winner + 7) : idleReel;
+    const period = cycle.length * cardStride;
+    const start = period + (roll ? roll.stop - first * cardStride : width / 2);
+    const lead = [...cycle, ...cycle, ...cycle, ...cycle];
+    setLeadIn({ reel: lead, start, period, stride: cardStride });
     setPhase("requesting");
     setResult(null);
     setRoll(null);
     try {
-      const element = reelElement.current;
-      const width = element?.firstElementChild?.getBoundingClientRect().width || REEL_CARD_WIDTH;
-      const measuredGap = element ? parseFloat(getComputedStyle(element).columnGap) : NaN;
-      const gap = Number.isFinite(measuredGap) ? measuredGap : REEL_GAP;
       const prize = await service.openCase(c);
       if (!alive.current) return;
       const skin = service.skin(prize.skin_id);
-      const winner = 32 + Math.floor(randomUnit() * 7);
-      const reel = Array.from({ length: winner + 7 }, (_, i) =>
-        i === winner
-          ? skin
-          : service.skin(
-              c.entries[Math.floor(randomUnit() * c.entries.length)].skin_id,
-            ),
+      const transform = element?.classList.contains("reel-waiting") && getComputedStyle(element).transform;
+      const offset = transform && transform !== "none" ? -new DOMMatrixReadOnly(transform).m41 : start;
+      const winner = Math.floor(offset / cardStride) + 32 + Math.floor(randomUnit() * 7);
+      const reel = Array.from({ length: winner + 7 }, (_, index) =>
+        index === winner ? skin : lead[index] ?? cycle[index % cycle.length],
       );
       setResult(skin);
       setRoll({
-        id: crypto.randomUUID(),
         reel,
         winner,
-        stride: width + gap,
+        start: offset,
         stop: reelStopOffset(winner, reelLandingPoint(randomUnit(), width), width, gap),
       });
       if (matchMedia("(prefers-reduced-motion: reduce)").matches) complete();
@@ -226,23 +238,29 @@ function CaseDetail({
         <div className="reel-pointer" />
         <div
           ref={reelElement}
-          key={roll?.id ?? "idle"}
-          className={`reel ${spinning ? "reel-spinning" : ""}`}
+          className={`reel ${waiting ? "reel-waiting" : spinning ? "reel-spinning" : ""}`}
           style={
             roll
               ? ({
                   transform: `translate3d(${-roll.stop}px,0,0)`,
-                  "--reel-start": "calc(-0.5 * var(--reel-card-width))",
+                  "--reel-start": `${-roll.start}px`,
+                  "--roll-easing": spinHandoffEasing(roll.stop - roll.start, CASE_DURATION,
+                    REEL_WAIT_SPEED * (stride ?? REEL_CARD_WIDTH + REEL_GAP), 0.16, 0.11),
                   "--reel-stop": `${-roll.stop}px`,
                   "--roll-duration": `${CASE_DURATION}ms`,
                 } as CSSProperties)
-              : undefined
+              : waiting && leadIn ? ({
+                transform: `translate3d(${-leadIn.start}px,0,0)`,
+                "--reel-start": `${-leadIn.start}px`,
+                "--reel-stop": `${-leadIn.start - leadIn.period}px`,
+                "--roll-duration": `${leadIn.period / (REEL_WAIT_SPEED * leadIn.stride)}ms`,
+              } as CSSProperties) : undefined
           }
           onAnimationEnd={(event) => {
             if (event.target === event.currentTarget) finishAnimation();
           }}
         >
-          {(roll?.reel ?? idleReel).map((s, i) => (
+          {(roll?.reel ?? (waiting ? leadIn?.reel : undefined) ?? idleReel).map((s, i) => (
             <div
               className={`reel-item rarity-${s.rarity} ${!busy && roll?.winner === i ? "reel-winner" : ""}`}
               key={i}
@@ -257,7 +275,7 @@ function CaseDetail({
       <div className="open-controls">
         <button
           className="primary"
-          disabled={busy}
+          disabled={busy || restoring}
           onClick={() => { unlockGameAudio(); requireLogin(open); }}
         >
           {busy ? (
@@ -269,7 +287,6 @@ function CaseDetail({
             </>
           )}
         </button>
-        {phase === "requesting" && <LoadingStatus>Получаем результат открытия…</LoadingStatus>}
         {result && !busy && (
           <button className="secondary" onClick={goInventory}>
             В инвентарь <ArrowRight size={17} />
@@ -278,7 +295,10 @@ function CaseDetail({
         <p className="error" role="alert">
           {error}
         </p>
-        <div aria-live="polite">
+        <div className="game-action-status" aria-live="polite">
+          <div data-inactive={!waiting || undefined}>
+            <LoadingStatus>Получаем результат открытия…</LoadingStatus>
+          </div>
           {result && !busy && (
             <span className="drop-result">
               Твой дроп:{" "}

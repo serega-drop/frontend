@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   bonusSpinEnd,
+  CASE_DURATION,
+  REEL_WAIT_SPEED,
+  UPGRADE_DURATION,
+  WHEEL_WAIT_SPEED,
+  spinHandoffEasing,
   nextRotation,
   reelLandingPoint,
   reelStopOffset,
@@ -11,6 +16,15 @@ import {
   wheelMarkIndex,
 } from "./animation";
 describe("Геометрия анимаций", () => {
+  it.each([
+    [1800, UPGRADE_DURATION, WHEEL_WAIT_SPEED, 0.18, 0.12],
+    [32 * 200, CASE_DURATION, REEL_WAIT_SPEED * 200, 0.16, 0.11],
+  ])("сохраняет скорость в момент перехода к остановке (%s)", (distance, duration, speed, x1, x2) => {
+    const easing = spinHandoffEasing(distance, duration, speed, x1, x2);
+    const [startX, startY, endX, endY] = easing.slice(13, -1).split(",").map(Number);
+    expect(distance * (startY / startX) / duration).toBeCloseTo(speed, 10);
+    expect((1 - endY) / (1 - endX)).toBe(0);
+  });
   it("показывает исходы бонусной серии с той же шкалой и продолжает вращение", () => {
     let rotation = 2023;
     for (const [chance, won, sample] of [[75, true, 0.2], [50, false, 0.8], [100 / 3, true, 0.6], [100 / 6, false, 0.1]] as const) {

@@ -39,6 +39,35 @@ describe("HTTP client", () => {
     expect(client.isAdmin()).toBe(true);
   });
 
+  it("reuses the public catalog after reload and restores sessions afresh", async () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const skin = { id: "skin-1", name: "Skin", price_minor: 100, weapon: "Weapon", rarity: "Common", image: "" };
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/refresh")) return json({ code: "invalid_session" }, 401);
+      if (path.endsWith("/skins")) return json({ items: [skin], total: 1 });
+      if (path.endsWith("/cases")) return json([cachedCase]);
+      throw Error(path);
+    });
+    const cachedCase = { ...gameCase, entries: [{ skin_id: skin.id, probability: 100 }] };
+    const site = "https://app.example";
+    await createHttpClient(site, fetcher, storage).initialize();
+    fetcher.mockClear();
+    const restored = createHttpClient(site, fetcher, storage);
+    expect(restored.skin(skin.id)).toEqual(skin);
+    expect(restored.cases()).toEqual([cachedCase]);
+    await restored.initialize();
+    expect(fetcher.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(
+      expect.arrayContaining(["/api/v1/auth/refresh", "/api/v1/admin/refresh"]),
+    );
+    expect(fetcher.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith("/skins"))).toBe(false);
+  });
+
   it("surfaces a rejected frontend origin during session restoration", async () => {
     const client = createHttpClient("https://app.example", async (input) => {
       const path = new URL(String(input)).pathname;

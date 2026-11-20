@@ -9,13 +9,32 @@ type Page<T> = { items: T[]; total: number };
 type Session = { access_token: string };
 type Profile = Omit<AccountView, "inventory">;
 type Plays = { inventory: InventoryItem[]; balance_minor: number };
+type CatalogStorage = Pick<Storage, "getItem" | "setItem">;
+type CatalogSnapshot = { skins: Skin[]; cases: GameCase[]; skinsFetchedAt: number };
+const SKINS_FRESH_FOR = 5 * 60_000;
+
+function readCatalog(storage: CatalogStorage | undefined, key: string): CatalogSnapshot | undefined {
+  try {
+    const snapshot = JSON.parse(storage?.getItem(key) ?? "null") as CatalogSnapshot | null;
+    if (snapshot && Number.isFinite(snapshot.skinsFetchedAt) &&
+        Array.isArray(snapshot.skins) && snapshot.skins.length &&
+        snapshot.skins.every((skin) => typeof skin?.id === "string") &&
+        Array.isArray(snapshot.cases) && snapshot.cases.length &&
+        snapshot.cases.every((gameCase) => gameCase?.entries?.length &&
+          gameCase.entries.every((entry) => typeof entry?.skin_id === "string"))) return snapshot;
+  } catch {
+    // Start with the server catalog if storage is unavailable or corrupt.
+  }
+}
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
 
-export function createHttpClient(base: string, fetcher = fetch): GameClient {
+export function createHttpClient(base: string, fetcher = fetch, storage?: CatalogStorage): GameClient {
   const url = `${base.replace(/\/$/, "")}/api/v1`;
+  const storageKey = `serega-drop:catalog:v1:${url}`;
+  const cachedCatalog = readCatalog(storage, storageKey);
   const tokens: Partial<Record<Role, string>> = {};
   const refreshing: Partial<Record<Role, Promise<boolean>>> = {};
   const listeners = new Set<() => void>();
@@ -23,9 +42,11 @@ export function createHttpClient(base: string, fetcher = fetch): GameClient {
   const keys = new Map<string, string>();
   let player: AccountView | null = null;
   let players: AccountView[] = [];
-  let publicCases: GameCase[] = [];
-  let publicSkins: Skin[] = [];
-  let skinsById = new Map<string, Skin>();
+  let publicCases = cachedCatalog?.cases ?? [];
+  let publicSkins = cachedCatalog?.skins ?? [];
+  let skinsById = new Map(publicSkins.map((skin) => [skin.id, skin]));
+  let skinsFetchedAt = cachedCatalog?.skinsFetchedAt ?? 0;
+  let caseRequest = 0;
   let bootstrap: Promise<void> | undefined;
 
   const emit = () => listeners.forEach((listener) => listener());
@@ -165,14 +186,40 @@ export function createHttpClient(base: string, fetcher = fetch): GameClient {
     emit();
   }
 
+  function saveCatalog() {
+    if (!storage || !publicSkins.length || !publicCases.length) return;
+    try {
+      storage.setItem(storageKey, JSON.stringify({
+        skins: publicSkins, cases: publicCases, skinsFetchedAt,
+      } satisfies CatalogSnapshot));
+    } catch {
+      // Storage is optional when disabled or full.
+    }
+  }
+
+  async function loadCases() {
+    const request = ++caseRequest;
+    const cases = await list<GameCase>("/cases");
+    if (request !== caseRequest) return;
+    publicCases = cases;
+    saveCatalog();
+    emit();
+  }
+
+  async function loadSkins() {
+    if (skinsFetchedAt && Date.now() - skinsFetchedAt < SKINS_FRESH_FOR) return;
+    publicSkins = await list<Skin>("/skins");
+    skinsById = new Map(publicSkins.map((skin) => [skin.id, skin]));
+    skinsFetchedAt = Date.now();
+    saveCatalog();
+    emit();
+  }
+
   async function initialize() {
+    const catalog = Promise.all([loadSkins(), loadCases()]);
+    if (cachedCatalog) void catalog.catch(() => {});
     await Promise.all([
-      Promise.all([list<Skin>("/skins"), list<GameCase>("/cases")]).then(([skins, cases]) => {
-        publicSkins = skins;
-        skinsById = new Map(skins.map((skin) => [skin.id, skin]));
-        publicCases = cases;
-        emit();
-      }),
+      cachedCatalog ? undefined : catalog,
       refresh("player").then((active) => active ? loadPlayer() : undefined),
       refresh("admin").then((active) => active ? loadPlayers() : undefined),
     ]);
@@ -353,14 +400,12 @@ export function createHttpClient(base: string, fetcher = fetch): GameClient {
     gameSettings: () => auth<SettingsView>("admin", "/admin/game-settings"),
     async saveGameSettings(active, version) {
       const view = await mutate<SettingsView>("admin", "/admin/game-settings", "PUT", { active, version });
-      publicCases = await list<GameCase>("/cases").catch(() => publicCases);
-      emit();
+      await loadCases().catch(() => {});
       return view;
     },
     async resetGameSettings(version) {
       const view = await mutate<SettingsView>("admin", "/admin/game-settings/reset", "POST", { version });
-      publicCases = await list<GameCase>("/cases").catch(() => publicCases);
-      emit();
+      await loadCases().catch(() => {});
       return view;
     },
   };

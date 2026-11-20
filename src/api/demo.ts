@@ -1,3 +1,4 @@
+import { nearestUpgradeTarget } from "./economy";
 import type { Account, DemoDatabase, GameCase, InventoryItem } from "./types";
 import { caseGoodDropChance, caseOddsAt, cases, getSkin, skins } from "./catalog";
 import { defaultSettings, type AccountView, type GameClient, type GameSettings, type PromoCode, type SaleInput, type SaleQuote, type SettingsView, type Statistics, type TopUpInput, type TopUpRequest, type UpgradeInput, type UpgradeQuote, type UpgradeResult } from "./client";
@@ -202,15 +203,11 @@ export function createDemoService(
       return sum + skin(owned.skin_id).price_minor;
     }, 0);
     const config = settings();
-    const possible = skins.filter((candidate) => candidate.price_minor > total);
     const chanceAt = (price: number) => config.active.upgrade_multiplier * total / price;
     const desired = input.desired_chance ?? config.active.upgrade_multiplier / (input.target_multiplier ?? 2);
     const target = input.target_skin_id
-      ? possible.find((candidate) => candidate.id === input.target_skin_id)
-      : possible.sort((left, right) =>
-          Math.abs(chanceAt(left.price_minor) - desired) - Math.abs(chanceAt(right.price_minor) - desired) ||
-          left.price_minor - right.price_minor || left.id.localeCompare(right.id),
-        )[0];
+      ? skins.find((candidate) => candidate.id === input.target_skin_id && candidate.price_minor > total)
+      : nearestUpgradeTarget(skins, total, config.active.upgrade_multiplier, desired);
     if (!target) throw Error("Выберите цель дороже суммы выбранных предметов");
     return {
       quote_id: JSON.stringify([ids, target.id, total, config.version]),
