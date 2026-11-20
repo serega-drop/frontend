@@ -42,6 +42,12 @@ export function reelLandingPoint(sample: number, width = REEL_CARD_WIDTH) {
 export const WHEEL_WAIT_SPEED = 0.54; // degrees/ms
 export const REEL_WAIT_SPEED = 0.009; // cards/ms
 
+export function wheelHandoffEasing(distance: number) {
+  const firstTime = 0.18;
+  const firstProgress = firstTime * WHEEL_WAIT_SPEED * UPGRADE_DURATION / distance;
+  return `cubic-bezier(${firstTime}, ${firstProgress}, 0.12, 1)`;
+}
+
 export function spinHandoffEasing(distance: number, duration: number, speed: number) {
   const initialSlope = speed * duration / distance;
   const firstTime = 1 / 3;

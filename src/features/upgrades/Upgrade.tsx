@@ -27,7 +27,7 @@ import {
   UPGRADE_DURATION,
   WHEEL_MARK_STEP,
   WHEEL_WAIT_SPEED,
-  spinHandoffEasing,
+  wheelHandoffEasing,
   bonusSpinEnd,
   upgradeArc,
   nextRotation,
@@ -485,7 +485,7 @@ export function Upgrade({
                   "--spin-end": `${spin?.end ?? rotation}deg`,
                   "--spin-duration": `${spinDuration}ms`,
                   "--spin-easing": phase === "spinning" && attempt
-                    ? spinHandoffEasing(attempt.end - attempt.start, UPGRADE_DURATION, WHEEL_WAIT_SPEED)
+                    ? wheelHandoffEasing(attempt.end - attempt.start)
                     : undefined,
                   "--wait-start": `${rotation}deg`,
                   "--wait-end": `${rotation + 360}deg`,
